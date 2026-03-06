@@ -13,6 +13,7 @@ export async function POST() {
     if (err instanceof RateLimitError) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 429 });
     }
+    throw err;
   }
 
   const config = getLLMConfig();

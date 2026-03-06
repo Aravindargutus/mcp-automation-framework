@@ -25,6 +25,7 @@ export async function GET(req: Request) {
     if (err instanceof RateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 });
     }
+    throw err;
   }
 
   const { searchParams } = new URL(req.url);

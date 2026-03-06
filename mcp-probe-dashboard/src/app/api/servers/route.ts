@@ -36,6 +36,7 @@ export async function POST(req: Request) {
     if (err instanceof RateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 });
     }
+    throw err;
   }
 
   const body = await req.json();
@@ -71,6 +72,7 @@ export async function DELETE(req: Request) {
     if (err instanceof RateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 });
     }
+    throw err;
   }
 
   const { searchParams } = new URL(req.url);

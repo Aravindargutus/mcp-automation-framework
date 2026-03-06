@@ -25,6 +25,7 @@ coverage/
 mcp-probe-dashboard/src/data/runs.json
 mcp-probe-dashboard/src/data/servers.json
 mcp-probe-dashboard/src/data/llm-config.json
+mcp-probe-dashboard/src/data/oauth-tokens.json
 
 # OS files
 .DS_Store

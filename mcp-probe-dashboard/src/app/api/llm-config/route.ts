@@ -23,6 +23,7 @@ export async function PUT(request: Request) {
     if (err instanceof RateLimitError) {
       return NextResponse.json({ error: err.message }, { status: 429 });
     }
+    throw err;
   }
 
   try {
@@ -43,6 +44,7 @@ export async function PUT(request: Request) {
         if (err instanceof ValidationError) {
           return NextResponse.json({ error: err.message }, { status: 400 });
         }
+        return NextResponse.json({ error: 'Invalid baseUrl' }, { status: 400 });
       }
     }
 

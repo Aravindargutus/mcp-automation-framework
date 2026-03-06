@@ -2,7 +2,7 @@
  * Shared security utilities — input validation, SSRF protection,
  * OAuth state signing, rate limiting, header sanitization, and error handling.
  */
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 
 // ─── Custom error class ───────────────────────────────────────────────
 /** Thrown for user-fixable validation errors — message is safe to expose to clients. */
@@ -120,7 +120,7 @@ export function validateArgs(args: unknown): string[] {
       throw new ValidationError('Each transport.args entry must be a string');
     }
     if (DANGEROUS_ARG_CHARS.test(arg)) {
-      throw new ValidationError(`transport.args contains disallowed shell metacharacters: ${arg}`);
+      throw new ValidationError('transport.args contains disallowed shell metacharacters');
     }
   }
   return args as string[];
@@ -144,9 +144,10 @@ export function validateServerConfig(body: Record<string, any>): void {
     }
   } else {
     // http or sse — require a valid URL
-    if (body.transport.url) {
-      validateUrl(body.transport.url, 'transport.url');
+    if (!body.transport.url) {
+      throw new ValidationError('transport.url is required for http/sse transports');
     }
+    validateUrl(body.transport.url, 'transport.url');
   }
 
   if (body.auth && typeof body.auth === 'object') {
@@ -184,7 +185,9 @@ export function verifyState(state: string): Record<string, unknown> {
   const data = state.slice(0, dotIndex);
   const sig = state.slice(dotIndex + 1);
   const expected = createHmac('sha256', getHmacSecret()).update(data).digest('base64url');
-  if (sig !== expected) {
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
     throw new ValidationError('State signature verification failed');
   }
   try {
@@ -260,6 +263,11 @@ const BLOCKED_HEADERS = new Set([
   'te',
   'trailer',
   'keep-alive',
+  'cookie',
+  'set-cookie',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
 ]);
 
 /** Strip dangerous/hop-by-hop headers before forwarding. */
