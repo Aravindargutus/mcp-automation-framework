@@ -1,0 +1,51 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Claude Code settings (contains local credentials)
+.claude/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+out/
+
+# Next.js
+.next/
+
+# Test output
+mcp-probe-results/
+coverage/
+
+# Runtime data
+mcp-probe-dashboard/src/data/runs.json
+mcp-probe-dashboard/src/data/servers.json
+mcp-probe-dashboard/src/data/llm-config.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+*.pem
+.vercel

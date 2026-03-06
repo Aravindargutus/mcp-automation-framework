@@ -1,0 +1,47 @@
+version: "1"
+
+servers:
+  # Example: stdio-based MCP server
+  - name: my-filesystem-server
+    transport:
+      type: stdio
+      command: mcp-server-filesystem
+      args: ["/tmp/mcp-probe-test"]
+
+  # Example: HTTP-based MCP server
+  # - name: my-http-server
+  #   transport:
+  #     type: http
+  #     url: http://localhost:3000/mcp
+  #   auth:
+  #     type: bearer
+  #     token: { env: "MCP_AUTH_TOKEN" }
+
+  # Example: with tool safety overrides
+  # - name: my-db-server
+  #   transport:
+  #     type: stdio
+  #     command: node
+  #     args: ["./my-db-server.js"]
+  #   toolSafety:
+  #     readOnly: ["query", "list_tables"]
+  #     write: ["execute_sql", "drop_table"]
+  #   timeout:
+  #     request: 10000
+  #     test: 60000
+
+suites:
+  include:
+    - protocol
+    - schema
+
+defaults:
+  timeout:
+    request: 30000
+    test: 300000
+  maxConcurrent: 5
+  allowWriteFuzzing: false
+
+output:
+  format: json
+  dir: ./mcp-probe-results
