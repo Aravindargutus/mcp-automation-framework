@@ -4,6 +4,10 @@
 
 MCP Probe connects to your MCP server, discovers its tools/resources/prompts, and runs a battery of tests covering protocol conformance, schema validation, execution correctness, error handling, edge cases, and optional AI-powered semantic evaluation. Results are reported as a letter grade (A-F) with detailed per-test breakdowns.
 
+### Demo
+
+https://bucketesting-development.zohostratus.in/MCP-Automation.mp4
+
 ```
   MCP Probe v0.1.0
 

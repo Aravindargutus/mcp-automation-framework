@@ -73,6 +73,10 @@ export default function ServerForm({ initial, onSave, onCancel }: ServerFormProp
   const [discovering, setDiscovering] = useState(false);
   const [showManualOAuth, setShowManualOAuth] = useState(false);
 
+  // Track whether secret fields were edited (to avoid sending masked values back)
+  const [tokenDirty, setTokenDirty] = useState(!initial); // new server = always dirty
+  const [clientSecretDirty, setClientSecretDirty] = useState(!initial);
+
   const [saving, setSaving] = useState(false);
   const [inspecting, setInspecting] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredInfo | null>(null);
@@ -124,14 +128,15 @@ export default function ServerForm({ initial, onSave, onCancel }: ServerFormProp
       config.transport.url = url;
     }
     if (authType === 'bearer' && authToken) {
-      config.auth = { type: 'bearer', token: authToken };
+      // Send __MASKED__ sentinel if the token wasn't edited, so backend preserves the original
+      config.auth = { type: 'bearer', token: tokenDirty ? authToken : '__MASKED__' };
     } else if (authType === 'apikey' && authToken) {
-      config.auth = { type: 'apikey', key: authToken };
+      config.auth = { type: 'apikey', key: tokenDirty ? authToken : '__MASKED__' };
     } else if (authType === 'oauth') {
       config.auth = {
         type: 'oauth',
         clientId: oauthClientId,
-        clientSecret: oauthClientSecret,
+        clientSecret: clientSecretDirty ? oauthClientSecret : '__MASKED__',
         authUrl: oauthAuthUrl,
         tokenUrl: oauthTokenUrl,
         scopes: oauthScopes,
@@ -392,7 +397,16 @@ export default function ServerForm({ initial, onSave, onCancel }: ServerFormProp
               className="input-field"
               type="password"
               value={authToken}
-              onChange={(e) => setAuthToken(e.target.value)}
+              onFocus={() => {
+                // Clear masked placeholder when user focuses to enter a new value
+                if (!tokenDirty && authToken.includes('\u2022')) {
+                  setAuthToken('');
+                }
+              }}
+              onChange={(e) => {
+                setAuthToken(e.target.value);
+                setTokenDirty(true);
+              }}
               placeholder="Enter token"
             />
           </Field>
@@ -538,7 +552,15 @@ export default function ServerForm({ initial, onSave, onCancel }: ServerFormProp
                 className="input-field"
                 type="password"
                 value={oauthClientSecret}
-                onChange={(e) => setOauthClientSecret(e.target.value)}
+                onFocus={() => {
+                  if (!clientSecretDirty && oauthClientSecret.includes('\u2022')) {
+                    setOauthClientSecret('');
+                  }
+                }}
+                onChange={(e) => {
+                  setOauthClientSecret(e.target.value);
+                  setClientSecretDirty(true);
+                }}
                 placeholder="Enter client secret"
               />
             </Field>

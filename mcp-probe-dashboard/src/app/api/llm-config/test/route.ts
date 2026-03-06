@@ -4,8 +4,17 @@
  */
 import { NextResponse } from 'next/server';
 import { getLLMConfig } from '@/lib/llm-store';
+import { oauthLimiter, RateLimitError } from '@/lib/security';
 
 export async function POST() {
+  try {
+    oauthLimiter.consume('llm-config:test');
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 429 });
+    }
+  }
+
   const config = getLLMConfig();
 
   if (!config?.enabled || !config.apiKey) {
@@ -71,7 +80,7 @@ export async function POST() {
         tokensUsed: data.usage?.total_tokens,
       });
     }
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: (err as Error).message });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Connection test failed. Please check your configuration.' });
   }
 }

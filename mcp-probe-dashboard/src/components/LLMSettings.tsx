@@ -38,6 +38,7 @@ export default function LLMSettings() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [keyDirty, setKeyDirty] = useState(false);
 
   useEffect(() => {
     fetch('/api/llm-config')
@@ -59,16 +60,22 @@ export default function LLMSettings() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // If the user didn't change the API key, send sentinel so backend preserves the original
+      const payload = {
+        ...config,
+        apiKey: keyDirty ? config.apiKey : '__MASKED__',
+      };
       const res = await fetch('/api/llm-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json();
         alert(`Save failed: ${err.error}`);
       } else {
         setDirty(false);
+        setKeyDirty(false);
       }
     } finally {
       setSaving(false);
@@ -80,15 +87,20 @@ export default function LLMSettings() {
     setTestResult(null);
     try {
       // Save first, then trigger a test via a simple API call
+      const payload = {
+        ...config,
+        apiKey: keyDirty ? config.apiKey : '__MASKED__',
+      };
       await fetch('/api/llm-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(payload),
       });
       const res = await fetch('/api/llm-config/test', { method: 'POST' });
       const data = await res.json();
       setTestResult(data.ok ? { ok: true, message: 'Connected successfully!' } : { ok: false, message: data.error });
       setDirty(false);
+      setKeyDirty(false);
     } catch (err) {
       setTestResult({ ok: false, message: (err as Error).message });
     } finally {
@@ -172,8 +184,15 @@ export default function LLMSettings() {
                 <input
                   type="password"
                   value={config.apiKey}
+                  onFocus={(e) => {
+                    // Clear the masked placeholder when user focuses to type a new key
+                    if (!keyDirty && config.apiKey.includes('\u2022')) {
+                      setConfig((prev) => ({ ...prev, apiKey: '' }));
+                    }
+                  }}
                   onChange={(e) => {
                     setConfig((prev) => ({ ...prev, apiKey: e.target.value }));
+                    setKeyDirty(true);
                     setDirty(true);
                   }}
                   placeholder={provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}

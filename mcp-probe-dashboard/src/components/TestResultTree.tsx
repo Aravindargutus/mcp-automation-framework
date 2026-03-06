@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { sanitizeMetadata } from '@/lib/mask-utils';
 
 interface AssertionResult {
   passed: boolean;
@@ -225,7 +226,7 @@ function TestDetailPanel({ metadata }: { metadata: Record<string, unknown> }) {
         )}
       </div>
       <div className="max-h-64 overflow-auto p-3">
-        <JsonBlock data={metadata[activeTab]} />
+        <JsonBlock data={sanitizeMetadata(metadata[activeTab])} />
       </div>
     </div>
   );

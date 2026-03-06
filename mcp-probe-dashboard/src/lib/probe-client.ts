@@ -7,6 +7,7 @@ import { eventBus, type RunEvent } from './event-emitter';
 import { createRun, updateRunProgress, completeRun, failRun } from './run-store';
 import { getOAuthTokens } from './server-store';
 import { getLLMConfig } from './llm-store';
+import { sanitizeHeaders, stripStackTrace } from './security';
 
 // Server config types (mirrored from mcp-probe to avoid import issues in Next.js)
 export interface ServerConfig {
@@ -103,7 +104,7 @@ export async function startRun(params: StartRunParams): Promise<string> {
       return { name: s.name, transport: s.transport as any, auth, timeout: s.timeout };
     }),
     suites: { include: params.suites ?? defaultSuites, exclude: [] },
-    defaults: { maxConcurrent: 5, maxOutputBytes: 1_048_576, allowWriteFuzzing: true },
+    defaults: { maxConcurrent: 5, maxOutputBytes: 1_048_576, allowWriteFuzzing: false },
     llmJudge,
   };
 
@@ -135,12 +136,15 @@ export async function startRun(params: StartRunParams): Promise<string> {
       progress.totalTests = 1;
       // Increment counters
       updateRunProgress(runId, progress);
-      emit(runId, 'test:end', testResult);
+      // Strip stack traces before emitting to dashboard
+      emit(runId, 'test:end', stripStackTrace(testResult));
     },
   })
     .then((report: any) => {
-      completeRun(runId, report);
-      emit(runId, 'run:end', report);
+      // Strip stack traces from the final report before storing
+      const sanitizedReport = stripStackTrace(report) as any;
+      completeRun(runId, sanitizedReport);
+      emit(runId, 'run:end', sanitizedReport);
     })
     .catch((err: Error) => {
       failRun(runId, err.message);
@@ -171,7 +175,7 @@ export async function inspectServer(server: ServerConfig): Promise<any> {
   } else {
     transport = new HttpTransport({
       url: server.transport.url!,
-      headers: { ...server.transport.headers, ...authHeaders },
+      headers: { ...sanitizeHeaders(server.transport.headers), ...authHeaders },
     });
   }
 

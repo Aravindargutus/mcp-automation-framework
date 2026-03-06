@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServer, setOAuthTokens } from '@/lib/server-store';
 import { exchangeAuthorization } from '@modelcontextprotocol/sdk/client/auth.js';
 import { retrieveVerifier } from '@/lib/pkce-store';
+import { verifyState, validateUrl, sanitizeErrorMessage } from '@/lib/security';
 
 /**
  * GET /api/oauth/callback?code=...&state=...
@@ -28,12 +29,12 @@ export async function GET(req: Request) {
     return redirectToResult(req, { error: 'Missing code or state parameter' });
   }
 
-  // Decode state
+  // Verify HMAC-signed state
   let stateData: Record<string, unknown>;
   try {
-    stateData = JSON.parse(Buffer.from(state, 'base64url').toString());
+    stateData = verifyState(state);
   } catch {
-    return redirectToResult(req, { error: 'Invalid state parameter' });
+    return redirectToResult(req, { error: 'State signature verification failed' });
   }
 
   const serverName = stateData.serverName as string;
@@ -53,6 +54,13 @@ export async function GET(req: Request) {
 
     if (!tokenEndpoint || !authServerUrl || !clientId) {
       return redirectToResult(req, { error: 'Incomplete PKCE state data' });
+    }
+
+    // Validate token endpoint URL to prevent SSRF
+    try {
+      validateUrl(tokenEndpoint, 'tokenEndpoint');
+    } catch {
+      return redirectToResult(req, { error: 'Invalid token endpoint URL' });
     }
 
     const codeVerifier = retrieveVerifier(serverName);
@@ -83,8 +91,8 @@ export async function GET(req: Request) {
       });
 
       return redirectToResult(req, { success: true, serverName });
-    } catch (err) {
-      return redirectToResult(req, { error: `PKCE token exchange failed: ${(err as Error).message}` });
+    } catch {
+      return redirectToResult(req, { error: 'Token exchange failed. Please retry authorization.' });
     }
   }
 
@@ -99,8 +107,17 @@ export async function GET(req: Request) {
     return redirectToResult(req, { error: `Server "${serverName}" is not configured for OAuth` });
   }
 
+  const tokenUrl = (oauth as any).tokenUrl as string;
+
+  // Validate token URL to prevent SSRF
   try {
-    const tokenRes = await fetch((oauth as any).tokenUrl, {
+    validateUrl(tokenUrl, 'tokenUrl');
+  } catch {
+    return redirectToResult(req, { error: 'Invalid token URL in server configuration' });
+  }
+
+  try {
+    const tokenRes = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -113,8 +130,7 @@ export async function GET(req: Request) {
     });
 
     if (!tokenRes.ok) {
-      const text = await tokenRes.text();
-      return redirectToResult(req, { error: `Token exchange failed: ${text}` });
+      return redirectToResult(req, { error: `Token exchange failed (status ${tokenRes.status})` });
     }
 
     const tokenData = await tokenRes.json();
@@ -130,7 +146,7 @@ export async function GET(req: Request) {
 
     return redirectToResult(req, { success: true, serverName });
   } catch (err) {
-    return redirectToResult(req, { error: (err as Error).message });
+    return redirectToResult(req, { error: sanitizeErrorMessage(err) });
   }
 }
 

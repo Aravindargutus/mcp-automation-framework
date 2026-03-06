@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { discoverOAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.js';
+import { validateUrl, oauthLimiter, RateLimitError } from '@/lib/security';
 
 /**
  * POST /api/oauth/discover
@@ -12,11 +13,27 @@ import { discoverOAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.j
  * Returns discovered endpoints or error.
  */
 export async function POST(req: Request) {
+  try {
+    oauthLimiter.consume('oauth:discover');
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+  }
+
   const body = await req.json();
   const { serverUrl, resourceMetadataUrl } = body;
 
   if (!serverUrl) {
     return NextResponse.json({ error: 'serverUrl is required' }, { status: 400 });
+  }
+
+  // Validate URLs to prevent SSRF
+  try {
+    validateUrl(serverUrl, 'serverUrl');
+    if (resourceMetadataUrl) validateUrl(resourceMetadataUrl, 'resourceMetadataUrl');
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 400 });
   }
 
   try {
@@ -37,9 +54,9 @@ export async function POST(req: Request) {
       responseTypesSupported: metadata?.response_types_supported,
       resource: resourceMeta?.resource,
     });
-  } catch (err) {
+  } catch {
     return NextResponse.json(
-      { error: `OAuth discovery failed: ${(err as Error).message}` },
+      { error: 'OAuth discovery failed. Please verify the server URL supports OAuth.' },
       { status: 502 },
     );
   }
