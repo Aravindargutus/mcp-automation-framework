@@ -33,7 +33,15 @@ export default function RunsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Run History</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Run History</h1>
+        <Link
+          href="/runs/compare"
+          className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700"
+        >
+          Compare Runs
+        </Link>
+      </div>
 
       {runs.length === 0 ? (
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-12 text-center text-zinc-500">

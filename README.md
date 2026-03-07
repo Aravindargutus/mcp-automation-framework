@@ -6,7 +6,11 @@ MCP Probe connects to your MCP server, discovers its tools/resources/prompts, an
 
 ### Demo
 
-https://bucketesting-development.zohostratus.in/MCP-Automation.mp4
+<p align="center">
+  <img src="https://bucketesting-development.zohostratus.in/MCP-Automation-.gif" alt="MCP Probe Demo — testing an MCP server with live results" width="800" />
+</p>
+
+> [Watch the full demo video](https://bucketesting-development.zohostratus.in/MCP-Automation.mp4)
 
 ```
   MCP Probe v0.1.0
@@ -42,7 +46,7 @@ https://bucketesting-development.zohostratus.in/MCP-Automation.mp4
 
 ## Features
 
-- **6 built-in test suites** covering protocol, schema, execution, error handling, edge cases, and AI evaluation
+- **8 built-in test suites** covering protocol, schema, execution, error handling, edge cases, security, performance, and AI evaluation
 - **Multiple transports** — stdio, HTTP, and SSE
 - **Authentication** — Bearer token, API key, and OAuth 2.0 with PKCE auto-discovery
 - **CLI + Dashboard** — run tests from the terminal or through an interactive web UI
@@ -50,7 +54,9 @@ https://bucketesting-development.zohostratus.in/MCP-Automation.mp4
 - **Graded scorecards** — A/B/C/D/F grades with percentage scores per server
 - **Real-time progress** — SSE-based live streaming in the dashboard
 - **Extensible** — plugin system for custom assertions, reporters, and side-effect tracking
-- **CI-friendly** — JSON/HTML reports, non-zero exit codes on failure
+- **Security scanning** — prompt injection, credential exposure, SSRF, path traversal, tool poisoning detection
+- **Performance benchmarking** (optional) — P50/P95/P99 latency, throughput (RPS), saturation testing with golden signals
+- **CI-friendly** — JSON/HTML/JUnit reports, `--fail-under` grade gating, `compare` regression detection, non-zero exit codes on failure
 
 ---
 

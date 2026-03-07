@@ -87,7 +87,7 @@ export async function startRun(params: StartRunParams): Promise<string> {
     ? { enabled: true, baseUrl: llmSettings.baseUrl, apiKey: llmSettings.apiKey, model: llmSettings.model, maxTokens: llmSettings.maxTokens }
     : undefined;
 
-  const defaultSuites = ['protocol', 'schema', 'execution', 'error-handling', 'edge-cases'];
+  const defaultSuites = ['protocol', 'schema', 'execution', 'error-handling', 'edge-cases', 'security'];
   if (llmJudge?.enabled) defaultSuites.push('ai-evaluation');
 
   const config = {

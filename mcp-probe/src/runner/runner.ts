@@ -25,6 +25,8 @@ import { ExecutionSuite } from '../suite/execution/index.js';
 import { ErrorHandlingSuite } from '../suite/error-handling/index.js';
 import { EdgeCasesSuite } from '../suite/edge-cases/index.js';
 import { AIEvaluationSuite } from '../suite/ai-evaluation/index.js';
+import { SecuritySuite } from '../suite/security/index.js';
+import { PerformanceSuite } from '../suite/performance/index.js';
 import { AssertHelper, type TestCase, type TestRunContext } from '../suite/types.js';
 import type { TestResult, SuiteResult } from '../plugin/types.js';
 import type { MCPProbeReport, ServerReport } from '../reporter/schema.js';
@@ -51,6 +53,10 @@ function createDefaultRegistry(config?: MCPProbeConfig): TestSuiteRegistry {
   registry.register(new ExecutionSuite());
   registry.register(new ErrorHandlingSuite());
   registry.register(new EdgeCasesSuite());
+  // Security suite — always-on (users can exclude via suites.exclude)
+  registry.register(new SecuritySuite());
+  // Performance suite — opt-in via config.performance.enabled
+  registry.register(new PerformanceSuite(config?.performance));
   // LLM-powered suite — only active when llmJudge.enabled=true in config
   registry.register(new AIEvaluationSuite(config?.llmJudge));
   return registry;
@@ -218,7 +224,8 @@ async function runServer(
 
   // --- Run suites ---
   const suiteIncludes = config.suites?.include ?? [
-    'protocol', 'schema', 'execution', 'error-handling', 'edge-cases',
+    'protocol', 'schema', 'execution', 'error-handling', 'edge-cases', 'security',
+    ...(config.performance?.enabled ? ['performance'] : []),
     ...(config.llmJudge?.enabled ? ['ai-evaluation'] : []),
   ];
   const suiteExcludes = config.suites?.exclude ?? [];

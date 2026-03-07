@@ -13,6 +13,7 @@ import { loadConfig, ConfigLoadError } from '../config/loader.js';
 import { run } from '../runner/runner.js';
 import { writeJsonReport } from '../reporter/json.js';
 import { writeHtmlReport } from '../reporter/html.js';
+import { writeJunitReport } from '../reporter/junit.js';
 import type { MCPProbeReport } from '../reporter/schema.js';
 
 const program = new Command();
@@ -29,9 +30,10 @@ program
   .argument('<config>', 'Path to config file (YAML or JSON)')
   .option('--verbose', 'Show detailed JSON-RPC traces', false)
   .option('--filter <pattern>', 'Run only tests matching this pattern')
-  .option('--format <format>', 'Output format: json, html, both', 'json')
+  .option('--format <format>', 'Output format: json, html, junit, both', 'json')
   .option('--output-dir <dir>', 'Output directory for reports')
   .option('--max-concurrent <n>', 'Max parallel servers', parseInt)
+  .option('--fail-under <grade>', 'Exit with code 1 if any server grades below this (A/B/C/D)')
   .action(async (configPath: string, opts: Record<string, unknown>) => {
     try {
       const config = loadConfig(configPath);
@@ -84,6 +86,9 @@ program
       if (format === 'html' || format === 'both') {
         paths.push(writeHtmlReport(report, outputDir));
       }
+      if (format === 'junit') {
+        paths.push(writeJunitReport(report, outputDir));
+      }
 
       // Summary
       printSummary(report);
@@ -94,9 +99,18 @@ program
       console.log();
 
       // Exit with non-zero if any server failed
-      const anyFailed = report.servers.some((s) =>
-        !s.connected || (s.score && s.score.grade === 'F'),
-      );
+      const failUnder = opts.failUnder as string | undefined;
+      const gradeOrder = ['A', 'B', 'C', 'D', 'F'];
+      const anyFailed = report.servers.some((s) => {
+        if (!s.connected) return true;
+        if (!s.score) return false;
+        if (failUnder && gradeOrder.includes(failUnder)) {
+          const threshold = gradeOrder.indexOf(failUnder);
+          const actual = gradeOrder.indexOf(s.score.grade);
+          return actual > threshold;
+        }
+        return s.score.grade === 'F';
+      });
       process.exit(anyFailed ? 1 : 0);
 
     } catch (err) {
@@ -220,6 +234,17 @@ program
       console.error(chalk.red(`\n  Error: ${(err as Error).message}\n`));
       process.exit(1);
     }
+  });
+
+// --- compare command ---
+program
+  .command('compare')
+  .description('Compare two test reports to detect regressions')
+  .argument('<old>', 'Path to the baseline JSON report')
+  .argument('<new>', 'Path to the new JSON report')
+  .action(async (oldPath: string, newPath: string) => {
+    const { runCompare } = await import('./compare.js');
+    runCompare(oldPath, newPath);
   });
 
 function printSummary(report: MCPProbeReport): void {

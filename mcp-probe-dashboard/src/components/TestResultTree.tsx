@@ -63,6 +63,12 @@ const SEVERITY_COLORS: Record<string, string> = {
   info: 'text-zinc-400',
 };
 
+const SUITE_BADGES: Record<string, { label: string; color: string }> = {
+  security: { label: '\uD83D\uDD12 Security', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
+  performance: { label: '\u26A1 Performance', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+  'ai-evaluation': { label: '\uD83E\uDD16 AI Eval', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' },
+};
+
 interface TestResultTreeProps {
   servers: ServerReport[];
   filterStatus?: string;
@@ -136,6 +142,11 @@ function SuiteNode({ suite, filterStatus }: { suite: SuiteResult; filterStatus?:
       >
         <span className="text-zinc-500">{open ? '\u25BC' : '\u25B6'}</span>
         <span className="font-medium text-zinc-300">{suite.suiteName}</span>
+        {SUITE_BADGES[suite.suiteName] && (
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${SUITE_BADGES[suite.suiteName].color}`}>
+            {SUITE_BADGES[suite.suiteName].label}
+          </span>
+        )}
         <span className="text-xs text-zinc-600">
           {suite.passed}p / {suite.failed}f / {suite.skipped}s
         </span>
@@ -164,6 +175,16 @@ function TestNode({ test }: { test: TestResult }) {
           {STATUS_ICONS[test.status]}
         </span>
         <span className="flex-1 text-zinc-300">{test.testName}</span>
+        {test.suiteName === 'security' && test.status === 'failed' && (
+          <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
+            VULNERABILITY
+          </span>
+        )}
+        {test.suiteName === 'performance' && test.metadata?.rps !== undefined && (
+          <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] text-blue-400">
+            {String(test.metadata.rps)} RPS
+          </span>
+        )}
         <span className="text-xs text-zinc-600">{test.durationMs}ms</span>
       </button>
       {open && (
@@ -197,9 +218,11 @@ function TestNode({ test }: { test: TestResult }) {
 
 function TestDetailPanel({ metadata }: { metadata: Record<string, unknown> }) {
   const hasLLM = metadata.llm !== undefined;
-  const allTabs = hasLLM
-    ? (['input', 'expected', 'actual', 'llm'] as const)
-    : (['input', 'expected', 'actual'] as const);
+  const hasFindings = metadata.findings !== undefined || metadata.leaksFound !== undefined;
+  const baseTabs: string[] = ['input', 'expected', 'actual'];
+  if (hasFindings) baseTabs.push('findings');
+  if (hasLLM) baseTabs.push('llm');
+  const allTabs = baseTabs;
   const [activeTab, setActiveTab] = useState<string>('input');
 
   return (
@@ -215,7 +238,7 @@ function TestDetailPanel({ metadata }: { metadata: Record<string, unknown> }) {
                 : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            {tab === 'llm' ? '🤖 LLM' : tab}
+            {tab === 'llm' ? '\uD83E\uDD16 LLM' : tab === 'findings' ? '\uD83D\uDD12 Findings' : tab}
           </button>
         ))}
         {/* Token usage badge for AI tests */}
@@ -226,8 +249,48 @@ function TestDetailPanel({ metadata }: { metadata: Record<string, unknown> }) {
         )}
       </div>
       <div className="max-h-64 overflow-auto p-3">
-        <JsonBlock data={sanitizeMetadata(metadata[activeTab])} />
+        {activeTab === 'findings' ? (
+          <FindingsBlock findings={metadata.findings ?? metadata.leaksFound} />
+        ) : (
+          <JsonBlock data={sanitizeMetadata(metadata[activeTab])} />
+        )}
       </div>
+    </div>
+  );
+}
+
+const FINDING_SEVERITY_COLORS: Record<string, string> = {
+  critical: 'bg-red-500/20 text-red-400 border-red-500/40',
+  high: 'bg-orange-500/20 text-orange-400 border-orange-500/40',
+  medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
+  low: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
+  info: 'bg-zinc-500/20 text-zinc-400 border-zinc-500/40',
+};
+
+function FindingsBlock({ findings }: { findings: unknown }) {
+  if (!findings || !Array.isArray(findings) || findings.length === 0) {
+    return <span className="text-xs italic text-emerald-400">No security findings</span>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {findings.map((f: Record<string, unknown>, i: number) => {
+        const severity = String(f.severity ?? 'info');
+        const colorClass = FINDING_SEVERITY_COLORS[severity] ?? FINDING_SEVERITY_COLORS.info;
+        return (
+          <div key={i} className={`rounded border px-3 py-2 text-xs ${colorClass}`}>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase">
+                {severity}
+              </span>
+              <span className="font-medium">{String(f.label ?? f.category ?? 'Finding')}</span>
+            </div>
+            {f.match ? (
+              <div className="mt-1 font-mono text-[10px] opacity-75">Match: {String(f.match)}</div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

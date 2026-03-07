@@ -44,3 +44,30 @@ export interface ScoreCard {
   passed: number;
   total: number;
 }
+
+// --- Security Findings ---
+export interface SecurityFinding {
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  category: 'prompt-injection' | 'credential-exposure' | 'tool-poisoning' | 'input-sanitization' | 'auth' | 'info-disclosure';
+  tool: string;
+  description: string;
+  evidence?: string;
+  remediation?: string;
+}
+
+// --- Performance Data ---
+export interface PerformanceData {
+  goldenSignals: {
+    latency: { p50Ms: number; p95Ms: number; p99Ms: number };
+    traffic: { rps: number };
+    errors: { rate: number };
+    saturation: { degradationPoint: number | null };
+  };
+  perTool: Array<{
+    toolName: string;
+    p50Ms: number;
+    p95Ms: number;
+    p99Ms: number;
+    meanMs: number;
+  }>;
+}

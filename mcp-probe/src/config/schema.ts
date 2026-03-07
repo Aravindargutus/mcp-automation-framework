@@ -83,7 +83,7 @@ const ServerConfigSchema = z.object({
 
 // --- Suite selection ---
 const SuiteSelectionSchema = z.object({
-  include: z.array(z.string()).default(['protocol', 'schema', 'execution', 'error-handling', 'edge-cases']),
+  include: z.array(z.string()).default(['protocol', 'schema', 'execution', 'error-handling', 'edge-cases', 'security']),
   exclude: z.array(z.string()).default([]),
 });
 
@@ -92,6 +92,19 @@ const OutputConfigSchema = z.object({
   format: z.enum(['json', 'html', 'junit']).default('json'),
   dir: z.string().default('./mcp-probe-results'),
   verbose: z.boolean().default(false),
+});
+
+// --- Performance testing (optional, opt-in) ---
+const PerformanceThresholdsSchema = z.object({
+  p95LatencyMs: z.number().positive().default(500),
+  minRps: z.number().positive().default(10),
+});
+
+const PerformanceConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  iterations: z.number().positive().default(10),
+  maxConcurrent: z.number().positive().default(50),
+  thresholds: PerformanceThresholdsSchema.optional().default({}),
 });
 
 // --- LLM judge (optional) ---
@@ -121,6 +134,7 @@ export const MCPProbeConfigSchema = z.object({
   suites: SuiteSelectionSchema.optional(),
   defaults: DefaultsSchema.optional(),
   output: OutputConfigSchema.optional(),
+  performance: PerformanceConfigSchema.optional(),
   llmJudge: LLMJudgeConfigSchema.optional(),
 });
 
@@ -132,6 +146,7 @@ export type AuthConfig = z.infer<typeof AuthSchema>;
 export type ToolSafetyOverride = z.infer<typeof ToolSafetyOverrideSchema>;
 export type OutputConfig = z.infer<typeof OutputConfigSchema>;
 export type LLMJudgeConfig = z.infer<typeof LLMJudgeConfigSchema>;
+export type PerformanceConfig = z.infer<typeof PerformanceConfigSchema>;
 export type DefaultsConfig = z.infer<typeof DefaultsSchema>;
 
 export {
@@ -140,5 +155,6 @@ export {
   AuthSchema,
   OutputConfigSchema,
   DefaultsSchema,
+  PerformanceConfigSchema,
   LLMJudgeConfigSchema,
 };
