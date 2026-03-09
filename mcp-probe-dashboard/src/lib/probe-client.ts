@@ -90,6 +90,10 @@ export async function startRun(params: StartRunParams): Promise<string> {
   const defaultSuites = ['protocol', 'schema', 'execution', 'error-handling', 'edge-cases', 'security'];
   if (llmJudge?.enabled) defaultSuites.push('ai-evaluation');
 
+  // Enable workflow suite if requested
+  const requestedSuites = params.suites ?? defaultSuites;
+  const workflowEnabled = requestedSuites.includes('workflow');
+
   const config = {
     version: '1' as const,
     servers: params.servers.map((s) => {
@@ -103,9 +107,11 @@ export async function startRun(params: StartRunParams): Promise<string> {
       }
       return { name: s.name, transport: s.transport as any, auth, timeout: s.timeout };
     }),
-    suites: { include: params.suites ?? defaultSuites, exclude: [] },
+    suites: { include: requestedSuites, exclude: [] },
     defaults: { maxConcurrent: 5, maxOutputBytes: 1_048_576, allowWriteFuzzing: false },
     llmJudge,
+    // Workflow config: auto-enabled when 'workflow' suite is selected
+    ...(workflowEnabled ? { workflow: { enabled: true, maxEntities: 2 } } : {}),
   };
 
   // Run in background (don't await)

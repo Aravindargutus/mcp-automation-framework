@@ -127,6 +127,14 @@ const DefaultsSchema = z.object({
   allowWriteFuzzing: z.boolean().default(false),
 });
 
+// --- Workflow testing (optional, opt-in) ---
+const WorkflowConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  maxEntities: z.number().positive().default(2),
+  modules: z.array(z.string()).optional(),
+  testDataOverrides: z.record(z.record(z.unknown())).optional(),
+});
+
 // --- Root config ---
 export const MCPProbeConfigSchema = z.object({
   version: z.literal('1'),
@@ -135,6 +143,7 @@ export const MCPProbeConfigSchema = z.object({
   defaults: DefaultsSchema.optional(),
   output: OutputConfigSchema.optional(),
   performance: PerformanceConfigSchema.optional(),
+  workflow: WorkflowConfigSchema.optional(),
   llmJudge: LLMJudgeConfigSchema.optional(),
 });
 
@@ -147,6 +156,7 @@ export type ToolSafetyOverride = z.infer<typeof ToolSafetyOverrideSchema>;
 export type OutputConfig = z.infer<typeof OutputConfigSchema>;
 export type LLMJudgeConfig = z.infer<typeof LLMJudgeConfigSchema>;
 export type PerformanceConfig = z.infer<typeof PerformanceConfigSchema>;
+export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 export type DefaultsConfig = z.infer<typeof DefaultsSchema>;
 
 export {
@@ -156,5 +166,6 @@ export {
   OutputConfigSchema,
   DefaultsSchema,
   PerformanceConfigSchema,
+  WorkflowConfigSchema,
   LLMJudgeConfigSchema,
 };

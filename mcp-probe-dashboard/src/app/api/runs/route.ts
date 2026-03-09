@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { startRun } from '@/lib/probe-client';
 import { listRuns } from '@/lib/run-store';
+import { getServer } from '@/lib/server-store';
 import { validateServerConfig, mutationLimiter, RateLimitError, ValidationError } from '@/lib/security';
 
 export async function GET() {
@@ -38,9 +39,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'servers array is required' }, { status: 400 });
   }
 
+  // Resolve server configs from the store using server names.
+  // The frontend sends masked configs (secrets redacted for display),
+  // so we look up the real (unmasked) config by name from the server store.
+  const resolvedServers = body.servers.map((s: { name: string }) => {
+    const stored = getServer(s.name);
+    return stored ?? s;
+  });
+
   // Validate each server config
   try {
-    for (const server of body.servers) {
+    for (const server of resolvedServers) {
       validateServerConfig(server);
     }
   } catch (err) {
@@ -51,7 +60,7 @@ export async function POST(req: Request) {
   }
 
   const runId = await startRun({
-    servers: body.servers,
+    servers: resolvedServers,
     suites: body.suites,
   });
   return NextResponse.json({ runId });

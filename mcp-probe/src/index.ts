@@ -33,3 +33,15 @@ export type { MCPProbeReport, ServerReport, ScoreCard } from './reporter/schema.
 
 // Runner
 export { run } from './runner/runner.js';
+
+// Agentic
+export { runAgentic } from './agentic/agentic-runner.js';
+export type {
+  AgenticRunConfig,
+  AgenticRunCallbacks,
+  AgenticRunResult,
+  ProductAgentResult,
+  EntityResult,
+  StepSummary,
+  StepInfo,
+} from './agentic/types.js';

@@ -67,6 +67,7 @@ const SUITE_BADGES: Record<string, { label: string; color: string }> = {
   security: { label: '\uD83D\uDD12 Security', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
   performance: { label: '\u26A1 Performance', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
   'ai-evaluation': { label: '\uD83E\uDD16 AI Eval', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' },
+  workflow: { label: '\uD83D\uDD04 Workflow', color: 'bg-teal-500/20 text-teal-400 border-teal-500/30' },
 };
 
 interface TestResultTreeProps {
@@ -185,6 +186,11 @@ function TestNode({ test }: { test: TestResult }) {
             {String(test.metadata.rps)} RPS
           </span>
         )}
+        {test.suiteName === 'workflow' && (test.metadata as Record<string, unknown>)?.actual ? (
+          <span className="rounded-full bg-teal-500/15 px-2 py-0.5 text-[10px] text-teal-400">
+            {String(((test.metadata as Record<string, unknown>).actual as Record<string, unknown>)?.stepsExecuted ?? '?')}/{String(((test.metadata as Record<string, unknown>).actual as Record<string, unknown>)?.stepCount ?? '?')} steps
+          </span>
+        ) : null}
         <span className="text-xs text-zinc-600">{test.durationMs}ms</span>
       </button>
       {open && (

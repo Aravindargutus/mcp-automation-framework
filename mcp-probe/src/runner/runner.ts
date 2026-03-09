@@ -27,6 +27,7 @@ import { EdgeCasesSuite } from '../suite/edge-cases/index.js';
 import { AIEvaluationSuite } from '../suite/ai-evaluation/index.js';
 import { SecuritySuite } from '../suite/security/index.js';
 import { PerformanceSuite } from '../suite/performance/index.js';
+import { WorkflowSuite } from '../suite/workflow/index.js';
 import { AssertHelper, type TestCase, type TestRunContext } from '../suite/types.js';
 import type { TestResult, SuiteResult } from '../plugin/types.js';
 import type { MCPProbeReport, ServerReport } from '../reporter/schema.js';
@@ -57,6 +58,8 @@ function createDefaultRegistry(config?: MCPProbeConfig): TestSuiteRegistry {
   registry.register(new SecuritySuite());
   // Performance suite — opt-in via config.performance.enabled
   registry.register(new PerformanceSuite(config?.performance));
+  // Workflow suite — opt-in via config.workflow.enabled
+  registry.register(new WorkflowSuite(config?.workflow));
   // LLM-powered suite — only active when llmJudge.enabled=true in config
   registry.register(new AIEvaluationSuite(config?.llmJudge));
   return registry;

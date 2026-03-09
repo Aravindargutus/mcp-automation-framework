@@ -83,7 +83,7 @@ export class RawMCPClient {
    * Send a raw JSON-RPC message and wait for a response.
    * The message is sent exactly as-is — no validation.
    */
-  async sendRaw(message: unknown, timeoutMs = 30_000): Promise<RawResponse> {
+  async sendRaw(message: unknown, timeoutMs = 60_000): Promise<RawResponse> {
     const startTime = Date.now();
     const msgAny = message as Record<string, unknown>;
     const id = msgAny.id;
@@ -120,7 +120,7 @@ export class RawMCPClient {
   /**
    * Send a well-formed JSON-RPC request with auto-incrementing ID.
    */
-  async sendRequest(method: string, params?: unknown, timeoutMs = 30_000): Promise<RawResponse> {
+  async sendRequest(method: string, params?: unknown, timeoutMs = 60_000): Promise<RawResponse> {
     const id = ++this.requestId;
     return this.sendRaw(
       {

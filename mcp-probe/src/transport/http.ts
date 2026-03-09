@@ -14,6 +14,16 @@ import type { MCPTransport, HttpTransportOptions, TransportEvents, TransportMetr
 
 const MCP_PROTOCOL_VERSION = '2025-11-25';
 
+/**
+ * Wrapper around global fetch that disables caching.
+ * Next.js patches the global fetch with caching/deduplication behavior
+ * that breaks real-time MCP communication. This ensures every request
+ * actually hits the network.
+ */
+function mcpFetch(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, cache: 'no-store' } as RequestInit);
+}
+
 export class HttpAuthRequiredError extends Error {
   readonly status = 401;
   readonly wwwAuthenticate: string | null;
@@ -74,7 +84,7 @@ export class HttpTransport implements MCPTransport {
     this._metrics.messagesSent++;
     this._metrics.lastActivityAt = Date.now();
 
-    const resp = await fetch(this.options.url, {
+    const resp = await mcpFetch(this.options.url, {
       method: 'POST',
       headers: {
         ...this.buildHeaders(),
@@ -152,7 +162,7 @@ export class HttpTransport implements MCPTransport {
     }
 
     try {
-      const resp = await fetch(this.options.url, {
+      const resp = await mcpFetch(this.options.url, {
         method: 'GET',
         headers,
         signal: this.sseController.signal,
@@ -178,7 +188,7 @@ export class HttpTransport implements MCPTransport {
     // Send DELETE to terminate session (per spec)
     if (this.sessionId) {
       try {
-        await fetch(this.options.url, {
+        await mcpFetch(this.options.url, {
           method: 'DELETE',
           headers: this.buildHeaders(),
         });

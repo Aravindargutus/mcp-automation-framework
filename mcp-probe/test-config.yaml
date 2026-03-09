@@ -1,0 +1,28 @@
+version: "1"
+
+servers:
+  - name: weather-mcp
+    transport:
+      type: stdio
+      command: node
+      args: ["../mcp-probe-dashboard/tools/weather-server.mjs"]
+
+suites:
+  include:
+    - protocol
+    - schema
+    - execution
+    - error-handling
+    - edge-cases
+    - security
+
+defaults:
+  timeout:
+    request: 30000
+    test: 300000
+  maxConcurrent: 5
+  allowWriteFuzzing: false
+
+output:
+  format: json
+  dir: ./mcp-probe-results
