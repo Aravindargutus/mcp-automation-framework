@@ -175,12 +175,15 @@ export class LLMClient {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
 
+        // Conditionally include Authorization header (Ollama local LLM needs no auth)
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.apiKey) {
+          headers['Authorization'] = `Bearer ${this.apiKey}`;
+        }
+
         const response = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.apiKey}`,
-          },
+          headers,
           body: JSON.stringify(body),
           signal: controller.signal,
         });

@@ -81,6 +81,9 @@ export function setNestedField(obj: Record<string, unknown>, path: string, value
     const nextPart = parts[i + 1];
 
     if (part.type === 'key') {
+      if (current === null || current === undefined || typeof current !== 'object' || Array.isArray(current)) {
+        return; // Cannot traverse into a non-object — bail out safely
+      }
       const container = current as Record<string, unknown>;
       if (container[part.value] === undefined || container[part.value] === null) {
         // Create the right container type based on what comes next
@@ -89,6 +92,9 @@ export function setNestedField(obj: Record<string, unknown>, path: string, value
       current = container[part.value];
     } else {
       // Array index
+      if (!Array.isArray(current)) {
+        return; // Cannot index into a non-array — bail out safely
+      }
       const arr = current as unknown[];
       while (arr.length <= part.index) {
         arr.push(nextPart.type === 'index' ? [] : {});
@@ -140,12 +146,34 @@ export function resolveStepArgs(
   const unresolved: string[] = [];
 
   for (const mapping of inputMappings) {
-    const value = outputStore.get(mapping.fromOutput);
-    if (value === undefined || value === null) {
-      unresolved.push(`${mapping.paramPath} ← ${mapping.fromOutput}`);
-      continue;
+    // Try primary key first
+    if (outputStore.has(mapping.fromOutput)) {
+      const value = outputStore.get(mapping.fromOutput);
+      if (value !== undefined && value !== null) {
+        setNestedField(resolved, mapping.paramPath, value);
+        continue;
+      }
     }
-    setNestedField(resolved, mapping.paramPath, value);
+
+    // Try fallback keys in order (cross-entity IDs, alternative names)
+    let resolvedFromFallback = false;
+    if (mapping.fallbackKeys) {
+      for (const fallbackKey of mapping.fallbackKeys) {
+        if (outputStore.has(fallbackKey)) {
+          const value = outputStore.get(fallbackKey);
+          if (value !== undefined && value !== null) {
+            setNestedField(resolved, mapping.paramPath, value);
+            resolvedFromFallback = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!resolvedFromFallback) {
+      // Genuinely unresolved — previous step didn't produce it
+      unresolved.push(`${mapping.paramPath} ← ${mapping.fromOutput}`);
+    }
   }
 
   return { resolved, unresolved };

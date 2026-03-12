@@ -38,7 +38,7 @@ const DEFAULT_TASK_TIMEOUT_MS = 300_000; // 5 minutes
 export class TaskClient {
   constructor(
     private rawClient: RawMCPClient,
-    private requestTimeoutMs = 30_000,
+    private requestTimeoutMs = 120_000,
   ) {}
 
   /**

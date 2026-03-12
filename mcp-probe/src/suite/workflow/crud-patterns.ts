@@ -70,11 +70,16 @@ export const RESPONSE_ID_PATHS: string[] = [
   'data[0].id',
   // Generic patterns
   'id',
+  'id_string',
   'data.id',
+  'data.id_string',
   'result.id',
   'result[0].id',
   'record.id',
   'results[0].id',
+  // Zoho Projects patterns (id_string is the string variant of numeric id)
+  'data[0].id_string',
+  '[0].id_string',
 ];
 
 // === Default Test Data per Module ===
@@ -164,16 +169,31 @@ export function getTestDataFromSchema(
 function generateTestDataFromBodySchema(toolSchema: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
-  // Navigate to body.data items schema
+  // Navigate to body schema
   const topProps = (toolSchema.properties ?? {}) as Record<string, Record<string, unknown>>;
   const bodySchema = topProps.body;
   if (!bodySchema) return result;
 
   const bodyProps = (bodySchema.properties ?? {}) as Record<string, Record<string, unknown>>;
-  const dataSchema = bodyProps.data;
-  if (!dataSchema || dataSchema.type !== 'array') return result;
+  const bodyRequired = (bodySchema.required ?? []) as string[];
 
-  const itemsSchema = dataSchema.items as Record<string, unknown> | undefined;
+  // Find the primary data array — may be 'data', 'users', 'territories', 'modules', etc.
+  // Use the first required array property in the body schema.
+  let arraySchema: Record<string, unknown> | undefined;
+  for (const key of bodyRequired) {
+    const prop = bodyProps[key];
+    if (prop && prop.type === 'array') {
+      arraySchema = prop;
+      break;
+    }
+  }
+  // Fallback: check body.data even if not required
+  if (!arraySchema) {
+    arraySchema = bodyProps.data;
+  }
+  if (!arraySchema || arraySchema.type !== 'array') return result;
+
+  const itemsSchema = arraySchema.items as Record<string, unknown> | undefined;
   if (!itemsSchema) return result;
 
   const itemProps = (itemsSchema.properties ?? {}) as Record<string, Record<string, unknown>>;
@@ -392,7 +412,7 @@ export function extractToolPrefix(toolName: string): string | null {
  */
 export function extractResourceFamily(entityHint: string): string {
   // Strip operation-like prefixes that extractEntityHint might have missed
-  const cleaned = entityHint.replace(/^(put|post|get|list|set)_/i, '');
+  const cleaned = entityHint.replace(/^(put|post|get|list|set|all|my|new)_/i, '');
   // Split by underscore, collect noun segments (stop before relational words)
   const relational = /^(with|by|using|for|of|from|to|in|ofa|and|or|on|at)$/i;
   const parts = cleaned.split('_');
@@ -408,8 +428,17 @@ export function extractResourceFamily(entityHint: string): string {
 /** Naive singularization — enough for consistent grouping across tool names. */
 export function singularize(word: string): string {
   if (word.endsWith('ies') && word.length > 3) return word.slice(0, -3) + 'y';
-  if (word.endsWith('ses') || word.endsWith('xes') || word.endsWith('zes'))
+  // "statuses" → "status", "classes" → "class", "addresses" → "address"
+  if (word.endsWith('sses') || word.endsWith('shes') || word.endsWith('ches') || word.endsWith('tches'))
     return word.slice(0, -2);
+  if (word.endsWith('uses') || word.endsWith('ases') || word.endsWith('ises') || word.endsWith('oses'))
+    return word.slice(0, -1);
+  // "boxes" → "box", "indexes" → "index", "buzzes" → "buzz"
+  if (word.endsWith('xes') || word.endsWith('zes'))
+    return word.slice(0, -2);
+  // "ses" at the end after exhausting the above patterns (e.g., "responses" → "response")
+  if (word.endsWith('ses') && word.length > 3)
+    return word.slice(0, -1);
   if (word.endsWith('s') && !word.endsWith('ss') && word.length > 2)
     return word.slice(0, -1);
   return word;
@@ -428,7 +457,8 @@ export function isPrimaryEntity(
   entityHint: string | null,
   primaryEntityHint: string | null,
 ): boolean {
-  if (!entityHint || !primaryEntityHint) return true; // Default to primary
+  if (!entityHint) return true; // No hint — can't distinguish, default to primary
+  if (!primaryEntityHint) return false; // No create tool → nothing is primary, treat all as secondary
   const primaryCore = primaryEntityHint.toLowerCase().replace(/s$/, '');
   return entityHint.toLowerCase().includes(primaryCore);
 }

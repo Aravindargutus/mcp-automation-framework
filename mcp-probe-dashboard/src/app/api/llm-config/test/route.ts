@@ -18,7 +18,11 @@ export async function POST() {
 
   const config = getLLMConfig();
 
-  if (!config?.enabled || !config.apiKey) {
+  const isOllama = config?.baseUrl
+    ? config.baseUrl.includes('localhost:11434') || config.baseUrl.includes('127.0.0.1:11434')
+    : false;
+
+  if (!config?.enabled || (!config.apiKey && !isOllama)) {
     return NextResponse.json({ ok: false, error: 'LLM judge not configured' });
   }
 
@@ -54,13 +58,14 @@ export async function POST() {
         tokensUsed: data.usage?.input_tokens + data.usage?.output_tokens,
       });
     } else {
-      // OpenAI-compatible
+      // OpenAI-compatible (including Ollama)
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (config.apiKey) {
+        headers['Authorization'] = `Bearer ${config.apiKey}`;
+      }
       const res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.apiKey}`,
-        },
+        headers,
         body: JSON.stringify({
           model: config.model,
           max_tokens: 10,
@@ -82,6 +87,11 @@ export async function POST() {
       });
     }
   } catch {
-    return NextResponse.json({ ok: false, error: 'Connection test failed. Please check your configuration.' });
+    return NextResponse.json({
+      ok: false,
+      error: isOllama
+        ? "Cannot connect to Ollama. Make sure it's running (ollama serve)"
+        : 'Connection test failed. Please check your configuration.',
+    });
   }
 }

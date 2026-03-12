@@ -193,6 +193,10 @@ function generateStringValue(schema: Record<string, unknown>, fieldName: string)
   if (lower.includes('url') || lower.includes('website')) return 'https://mcpprobe.dev';
   if (lower.includes('name')) return `MCPProbeTest_${Date.now().toString(36).slice(-4)}`;
   if (lower.includes('description')) return 'Created by MCP Probe test';
+  // Query/SQL-like fields need valid syntax, not generic strings
+  if (lower.includes('query') || lower.includes('sql') || lower.includes('coql'))
+    return 'select id from Leads limit 1';
+  if (lower.includes('subject')) return 'MCP Probe Test Subject';
 
   // Respect maxLength
   const maxLength = schema.maxLength as number | undefined;

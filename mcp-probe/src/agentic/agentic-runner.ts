@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { MCPProbeClient } from '../client/mcp-client.js';
 import { classifyTools, groupByEntity } from '../suite/workflow/dependency-detector.js';
+import { analyzeToolDependencies } from '../suite/workflow/schema-dependency-analyzer.js';
 import { runWithConcurrency } from '../runner/concurrency.js';
 import { createTransport } from './transport-factory.js';
 import { runProductAgent } from './product-agent.js';
@@ -43,10 +44,16 @@ export async function runAgentic(
 
   let tools;
   let classifications;
+  let dependencyProfiles;
   try {
     const discovered = await discoveryClient.connect();
     tools = discovered.tools;
     classifications = classifyTools(tools);
+
+    // Phase 1.5: Schema-driven dependency analysis.
+    // Builds dependency profiles for each tool (required/optional ID params,
+    // inferred families, output shapes) for precise inter-tool routing.
+    dependencyProfiles = analyzeToolDependencies(tools, classifications);
   } finally {
     try {
       await discoveryClient.disconnect();
@@ -85,6 +92,12 @@ export async function runAgentic(
       ? config.modules
       : await selectModulesForProduct(entityGroups, productName, config.llm);
 
+    // Filter dependency profiles to tools in this product
+    const productToolNames = new Set(productClassifications.map((c) => c.toolName));
+    const productProfiles = new Map(
+      [...(dependencyProfiles?.entries() ?? [])].filter(([name]) => productToolNames.has(name)),
+    );
+
     return runProductAgent({
       productName,
       entityGroups,
@@ -96,6 +109,7 @@ export async function runAgentic(
       maxEntities: config.maxEntitiesPerProduct,
       testDataOverrides: config.testDataOverrides,
       llm: config.llm,
+      dependencyProfiles: productProfiles.size > 0 ? productProfiles : undefined,
     });
   });
 

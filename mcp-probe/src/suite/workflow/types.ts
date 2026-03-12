@@ -24,8 +24,10 @@ export interface ToolClassification {
   entityHint: string | null;       // e.g., "Records", "Tags", "Territories"
   prefixGroup: string | null;      // e.g., "ZohoCRM" — shared prefix
   producesId: boolean;             // tool creates entities (returns IDs)
-  consumesId: boolean;             // tool requires entity IDs as input
-  idParamPaths: string[];          // e.g., ["path_variables.record_id", "body.data[].id"]
+  consumesId: boolean;             // tool requires entity IDs as input (required paths only)
+  idParamPaths: string[];          // ALL detected ID paths (backward compat)
+  requiredIdParamPaths: string[];  // ID paths that are in the schema's `required` array
+  optionalIdParamPaths: string[];  // ID paths NOT in `required` (e.g., query_params.ids)
   moduleParam: string | null;      // e.g., "path_variables.module" — the entity-type param
   moduleValues: string[];          // enum values for module param, e.g., ["Leads", "Contacts"]
 }
@@ -68,6 +70,7 @@ export interface OutputMapping {
 export interface InputMapping {
   paramPath: string;   // where to inject in args: "body.data[0].id"
   fromOutput: string;  // which OutputMapping name: "createdRecordId"
+  fallbackKeys?: string[];  // try these store keys if fromOutput is missing
 }
 
 export interface WorkflowStepDef {
@@ -78,6 +81,7 @@ export interface WorkflowStepDef {
   argsTemplate: Record<string, unknown>;
   outputMappings: OutputMapping[];
   inputMappings: InputMapping[];
+  entityHint?: string | null;  // Tool's entity hint for resource family detection in PIV loop
 }
 
 export interface WorkflowDefinition {

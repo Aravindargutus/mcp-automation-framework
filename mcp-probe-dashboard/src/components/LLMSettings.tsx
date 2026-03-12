@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface LLMConfig {
   enabled: boolean;
@@ -10,17 +10,26 @@ interface LLMConfig {
   maxTokens: number;
 }
 
-type Provider = 'anthropic' | 'openai' | 'custom';
+type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom';
 
 const PROVIDER_DEFAULTS: Record<Provider, { baseUrl: string; model: string }> = {
   anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514' },
   openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  ollama: { baseUrl: 'http://localhost:11434/v1', model: '' },
   custom: { baseUrl: '', model: '' },
+};
+
+const PROVIDER_LABELS: Record<Provider, string> = {
+  anthropic: 'Anthropic (Claude)',
+  openai: 'OpenAI',
+  ollama: 'Ollama (Local)',
+  custom: 'Custom',
 };
 
 function detectProvider(baseUrl: string): Provider {
   if (baseUrl.includes('anthropic.com')) return 'anthropic';
   if (baseUrl.includes('openai.com')) return 'openai';
+  if (baseUrl.includes('localhost:11434') || baseUrl.includes('127.0.0.1:11434')) return 'ollama';
   return 'custom';
 }
 
@@ -40,21 +49,70 @@ export default function LLMSettings() {
   const [dirty, setDirty] = useState(false);
   const [keyDirty, setKeyDirty] = useState(false);
 
+  // Ollama model discovery
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
+  const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
+
+  const fetchOllamaModels = useCallback(async (baseUrl?: string) => {
+    setOllamaModelsLoading(true);
+    setOllamaModelsError(null);
+    try {
+      const url = baseUrl
+        ? `/api/llm-config/models?baseUrl=${encodeURIComponent(baseUrl)}`
+        : '/api/llm-config/models';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.error) {
+        setOllamaModelsError(data.error);
+        setOllamaModels([]);
+      } else {
+        setOllamaModels(data.models ?? []);
+        // Auto-select first model if none selected
+        if (data.models?.length > 0) {
+          setConfig((prev) => {
+            if (!prev.model || !data.models.includes(prev.model)) {
+              return { ...prev, model: data.models[0] };
+            }
+            return prev;
+          });
+          setDirty(true);
+        }
+      }
+    } catch {
+      setOllamaModelsError('Failed to fetch models from Ollama');
+      setOllamaModels([]);
+    } finally {
+      setOllamaModelsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetch('/api/llm-config')
       .then((r) => r.json())
       .then((data: LLMConfig) => {
         setConfig(data);
-        setProvider(detectProvider(data.baseUrl));
+        const detected = detectProvider(data.baseUrl);
+        setProvider(detected);
+        // Auto-fetch Ollama models on load if provider is ollama
+        if (detected === 'ollama' && data.enabled) {
+          fetchOllamaModels(data.baseUrl);
+        }
       })
       .catch(() => {});
-  }, []);
+  }, [fetchOllamaModels]);
 
   const handleProviderChange = (p: Provider) => {
     setProvider(p);
     const defaults = PROVIDER_DEFAULTS[p];
     setConfig((prev) => ({ ...prev, baseUrl: defaults.baseUrl, model: defaults.model }));
     setDirty(true);
+    // Clear apiKey when switching to Ollama (no auth needed) so old keys don't carry over
+    if (p === 'ollama') {
+      setConfig((prev) => ({ ...prev, apiKey: '' }));
+      setKeyDirty(true);
+      fetchOllamaModels(PROVIDER_DEFAULTS.ollama.baseUrl);
+    }
   };
 
   const handleSave = async () => {
@@ -108,6 +166,8 @@ export default function LLMSettings() {
     }
   };
 
+  const isOllama = provider === 'ollama';
+
   return (
     <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50">
       <button
@@ -147,7 +207,7 @@ export default function LLMSettings() {
               <div>
                 <label className="mb-1 block text-xs text-zinc-400">Provider</label>
                 <div className="flex gap-2">
-                  {(['anthropic', 'openai', 'custom'] as const).map((p) => (
+                  {(['anthropic', 'openai', 'ollama', 'custom'] as const).map((p) => (
                     <button
                       key={p}
                       onClick={() => handleProviderChange(p)}
@@ -157,7 +217,7 @@ export default function LLMSettings() {
                           : 'bg-zinc-800 text-zinc-400 hover:text-zinc-300'
                       }`}
                     >
-                      {p === 'anthropic' ? 'Anthropic (Claude)' : p === 'openai' ? 'OpenAI' : 'Custom'}
+                      {PROVIDER_LABELS[p]}
                     </button>
                   ))}
                 </div>
@@ -173,18 +233,20 @@ export default function LLMSettings() {
                     setConfig((prev) => ({ ...prev, baseUrl: e.target.value }));
                     setDirty(true);
                   }}
-                  placeholder="https://api.anthropic.com"
+                  placeholder={isOllama ? 'http://localhost:11434/v1' : 'https://api.anthropic.com'}
                   className="w-full rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
                 />
               </div>
 
               {/* API Key */}
               <div>
-                <label className="mb-1 block text-xs text-zinc-400">API Key</label>
+                <label className="mb-1 block text-xs text-zinc-400">
+                  API Key {isOllama && <span className="text-zinc-600">(optional)</span>}
+                </label>
                 <input
                   type="password"
                   value={config.apiKey}
-                  onFocus={(e) => {
+                  onFocus={() => {
                     // Clear the masked placeholder when user focuses to type a new key
                     if (!keyDirty && config.apiKey.includes('\u2022')) {
                       setConfig((prev) => ({ ...prev, apiKey: '' }));
@@ -195,29 +257,75 @@ export default function LLMSettings() {
                     setKeyDirty(true);
                     setDirty(true);
                   }}
-                  placeholder={provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
-                  className="w-full rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
+                  placeholder={
+                    isOllama
+                      ? 'Not required for local Ollama'
+                      : provider === 'anthropic'
+                        ? 'sk-ant-...'
+                        : 'sk-...'
+                  }
+                  className={`w-full rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500 ${
+                    isOllama ? 'opacity-60' : ''
+                  }`}
                 />
               </div>
 
               {/* Model */}
               <div>
                 <label className="mb-1 block text-xs text-zinc-400">Model</label>
-                <input
-                  type="text"
-                  value={config.model}
-                  onChange={(e) => {
-                    setConfig((prev) => ({ ...prev, model: e.target.value }));
-                    setDirty(true);
-                  }}
-                  className="w-full rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
-                />
+                {isOllama ? (
+                  // Ollama: model dropdown with refresh
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={config.model}
+                      onChange={(e) => {
+                        setConfig((prev) => ({ ...prev, model: e.target.value }));
+                        setDirty(true);
+                      }}
+                      className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
+                    >
+                      {ollamaModels.length === 0 && !ollamaModelsLoading && (
+                        <option value="">No models found</option>
+                      )}
+                      {ollamaModelsLoading && <option value="">Loading...</option>}
+                      {ollamaModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => fetchOllamaModels(config.baseUrl)}
+                      disabled={ollamaModelsLoading}
+                      className="rounded bg-zinc-800 px-2.5 py-2 text-sm text-zinc-400 ring-1 ring-zinc-700 hover:text-zinc-200 disabled:opacity-40"
+                      title="Refresh models"
+                    >
+                      {ollamaModelsLoading ? '...' : '↻'}
+                    </button>
+                  </div>
+                ) : (
+                  // Other providers: text input
+                  <input
+                    type="text"
+                    value={config.model}
+                    onChange={(e) => {
+                      setConfig((prev) => ({ ...prev, model: e.target.value }));
+                      setDirty(true);
+                    }}
+                    className="w-full rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
+                  />
+                )}
+                {ollamaModelsError && isOllama && (
+                  <p className="mt-1 text-[10px] text-red-400">{ollamaModelsError}</p>
+                )}
                 <p className="mt-1 text-[10px] text-zinc-500">
-                  {provider === 'anthropic'
-                    ? 'e.g., claude-sonnet-4-20250514, claude-haiku-4-20250514'
-                    : provider === 'openai'
-                      ? 'e.g., gpt-4o-mini, gpt-4o, gpt-4-turbo'
-                      : 'Enter the model name supported by your endpoint'}
+                  {isOllama
+                    ? 'Select from locally available models'
+                    : provider === 'anthropic'
+                      ? 'e.g., claude-sonnet-4-20250514, claude-haiku-4-20250514'
+                      : provider === 'openai'
+                        ? 'e.g., gpt-4o-mini, gpt-4o, gpt-4-turbo'
+                        : 'Enter the model name supported by your endpoint'}
                 </p>
               </div>
 
@@ -228,12 +336,19 @@ export default function LLMSettings() {
                   type="number"
                   value={config.maxTokens}
                   onChange={(e) => {
-                    setConfig((prev) => ({ ...prev, maxTokens: parseInt(e.target.value) || 1024 }));
+                    const raw = e.target.value;
+                    // Allow empty field while typing; only parse when there's a value
+                    const parsed = raw === '' ? 0 : parseInt(raw);
+                    setConfig((prev) => ({ ...prev, maxTokens: isNaN(parsed) ? prev.maxTokens : parsed }));
                     setDirty(true);
                   }}
+                  onBlur={() => {
+                    // Enforce min/default when user leaves the field
+                    setConfig((prev) => ({ ...prev, maxTokens: prev.maxTokens < 100 ? 1024 : prev.maxTokens }));
+                  }}
                   min={100}
-                  max={8192}
-                  className="w-32 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
+                  max={64000}
+                  className="w-40 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 ring-1 ring-zinc-700 focus:outline-none focus:ring-blue-500"
                 />
               </div>
 
@@ -248,7 +363,7 @@ export default function LLMSettings() {
                 </button>
                 <button
                   onClick={handleTest}
-                  disabled={testing || !config.apiKey}
+                  disabled={testing || (!config.apiKey && !isOllama)}
                   className="rounded bg-zinc-700 px-4 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-600 disabled:opacity-40"
                 >
                   {testing ? 'Testing...' : 'Test Connection'}
@@ -266,7 +381,7 @@ export default function LLMSettings() {
             <p className="text-xs text-zinc-500">
               When enabled, an AI model will evaluate your MCP tools for description quality,
               generate realistic arguments, and detect hidden failures in responses.
-              Requires an API key from Anthropic or OpenAI.
+              Requires an API key from Anthropic or OpenAI, or a local Ollama instance.
             </p>
           )}
         </div>

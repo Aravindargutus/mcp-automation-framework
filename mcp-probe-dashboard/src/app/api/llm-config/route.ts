@@ -33,13 +33,18 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 400 });
     }
 
+    // Detect Ollama (local LLM) by URL
+    const isOllama = body.baseUrl
+      ? body.baseUrl.includes('localhost:11434') || body.baseUrl.includes('127.0.0.1:11434')
+      : false;
+
     // Validate baseUrl when enabled
     if (body.enabled) {
       if (!body.baseUrl) {
         return NextResponse.json({ error: 'baseUrl is required when enabled' }, { status: 400 });
       }
       try {
-        validateUrl(body.baseUrl, 'baseUrl');
+        validateUrl(body.baseUrl, 'baseUrl', { allowLocalhost: isOllama });
       } catch (err) {
         if (err instanceof ValidationError) {
           return NextResponse.json({ error: err.message }, { status: 400 });
@@ -68,7 +73,8 @@ export async function PUT(request: Request) {
       apiKey = existing?.apiKey ?? '';
     }
 
-    if (body.enabled && !apiKey) {
+    // apiKey is optional for Ollama (local LLM, no auth needed)
+    if (body.enabled && !apiKey && !isOllama) {
       return NextResponse.json({ error: 'apiKey is required when enabled' }, { status: 400 });
     }
 
@@ -76,7 +82,7 @@ export async function PUT(request: Request) {
       enabled: body.enabled,
       baseUrl: body.baseUrl || '',
       apiKey,
-      model: body.model || 'claude-sonnet-4-20250514',
+      model: body.model || (isOllama ? '' : 'claude-sonnet-4-20250514'),
       maxTokens: body.maxTokens || 1024,
     });
 

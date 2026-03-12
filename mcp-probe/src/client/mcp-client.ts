@@ -85,7 +85,7 @@ export class MCPProbeClient {
     config: ServerConfig,
   ) {
     this.rawClient = new RawMCPClient(transport);
-    this.requestTimeoutMs = config.timeout?.request ?? 30_000;
+    this.requestTimeoutMs = config.timeout?.request ?? 120_000;
   }
 
   get discovered(): DiscoveredServer | null {

@@ -34,7 +34,7 @@ export function classifyTools(tools: DiscoveredTool[]): ToolClassification[] {
   return tools.map((tool) => {
     const { operation, producesId } = matchOperation(tool.name);
     const entityHint = extractEntityHint(tool.name, globalPrefix);
-    const { idPaths, moduleParam, moduleValues, consumesId } = analyzeSchema(tool.inputSchema);
+    const { idPaths, requiredIdPaths, optionalIdPaths, moduleParam, moduleValues, consumesId } = analyzeSchema(tool.inputSchema);
     // Store the tool's own prefix (may differ from globalPrefix in multi-product servers)
     const toolPrefix = extractToolPrefix(tool.name) ?? globalPrefix;
 
@@ -46,6 +46,8 @@ export function classifyTools(tools: DiscoveredTool[]): ToolClassification[] {
       producesId,
       consumesId,
       idParamPaths: idPaths,
+      requiredIdParamPaths: requiredIdPaths,
+      optionalIdParamPaths: optionalIdPaths,
       moduleParam,
       moduleValues,
     };
@@ -54,24 +56,34 @@ export function classifyTools(tools: DiscoveredTool[]): ToolClassification[] {
 
 /**
  * Analyze a tool's input schema to find ID params, module params, and enum values.
+ * Distinguishes required vs optional ID params using JSON Schema `required` arrays.
  */
 function analyzeSchema(schema: Record<string, unknown>): {
   idPaths: string[];
+  requiredIdPaths: string[];
+  optionalIdPaths: string[];
   moduleParam: string | null;
   moduleValues: string[];
   consumesId: boolean;
 } {
   const idPaths: string[] = [];
+  const requiredIdPaths: string[] = [];
+  const optionalIdPaths: string[] = [];
   let moduleParam: string | null = null;
   let moduleValues: string[] = [];
 
-  // Walk the schema properties recursively
-  walkSchemaProperties(schema, '', (path, propSchema) => {
+  // Walk the schema properties recursively, tracking required status
+  walkSchemaProperties(schema, '', (path, propSchema, isRequired) => {
     const propName = path.split('.').pop() ?? '';
 
     // Check if this is an ID field
     if (ID_FIELD_PATTERNS.some((p) => p.test(propName))) {
       idPaths.push(path);
+      if (isRequired) {
+        requiredIdPaths.push(path);
+      } else {
+        optionalIdPaths.push(path);
+      }
     }
 
     // Check if this is a module/entity field
@@ -84,22 +96,30 @@ function analyzeSchema(schema: Record<string, unknown>): {
     }
   });
 
+  // consumesId is true only when there are REQUIRED ID paths outside query_params.
+  // query_params ID paths are always optional filters (getAllProjects works without them).
+  // Optional body/path_variables IDs also don't make a tool a "consumer" that blocks on IDs.
+  const consumingPaths = requiredIdPaths.filter((p) => !p.startsWith('query_params.'));
+
   return {
     idPaths,
+    requiredIdPaths,
+    optionalIdPaths,
     moduleParam,
     moduleValues,
-    consumesId: idPaths.length > 0,
+    consumesId: consumingPaths.length > 0,
   };
 }
 
 /**
  * Walk all properties in a JSON schema (up to 3 levels deep) and invoke
- * the callback with the dotted path and property schema.
+ * the callback with the dotted path, property schema, and whether the
+ * property is in the parent's `required` array.
  */
 function walkSchemaProperties(
   schema: Record<string, unknown>,
   prefix: string,
-  callback: (path: string, propSchema: Record<string, unknown>) => void,
+  callback: (path: string, propSchema: Record<string, unknown>, isRequired: boolean) => void,
   depth = 0,
 ): void {
   if (depth > 3) return; // Prevent infinite recursion
@@ -107,11 +127,15 @@ function walkSchemaProperties(
   const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
   if (!properties || typeof properties !== 'object') return;
 
+  // Get the `required` array from this schema level
+  const requiredFields = Array.isArray(schema.required) ? schema.required as string[] : [];
+
   for (const [key, propSchema] of Object.entries(properties)) {
     if (!propSchema || typeof propSchema !== 'object') continue;
 
     const fullPath = prefix ? `${prefix}.${key}` : key;
-    callback(fullPath, propSchema);
+    const isRequired = requiredFields.includes(key);
+    callback(fullPath, propSchema, isRequired);
 
     // Recurse into nested objects
     if (propSchema.type === 'object' && propSchema.properties) {

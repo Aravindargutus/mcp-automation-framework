@@ -27,6 +27,8 @@ import {
   isPrimaryEntity,
   singularize,
 } from './crud-patterns.js';
+import { buildEntityDependencyGraph } from './entity-dependency-graph.js';
+import type { ToolDependencyProfile } from './schema-dependency-analyzer.js';
 
 /**
  * Compute a signature for an EntityGroup based on its sorted tool names.
@@ -73,11 +75,16 @@ function deduplicateEntities(
 
 /**
  * Generate CRUD lifecycle workflows from the dependency graph.
+ *
+ * @param dependencyProfiles - Optional schema-driven dependency profiles for
+ *   topological entity ordering. If not provided, falls back to the heuristic
+ *   "producers first" sort.
  */
 export function generateWorkflows(
   graph: DependencyGraph,
   tools: DiscoveredTool[],
   config: WorkflowConfig,
+  dependencyProfiles?: Map<string, ToolDependencyProfile>,
 ): WorkflowDefinition[] {
   const toolMap = new Map(tools.map((t) => [t.name, t]));
   const classificationMap = new Map(graph.tools.map((c) => [c.toolName, c]));
@@ -112,6 +119,20 @@ export function generateWorkflows(
   const { deduped, representedMap } = deduplicateEntities(entities);
   entities = deduped;
 
+  // Sort entities using topological ordering based on entity dependency graph.
+  // This ensures producers (entities that provide IDs) run before consumers
+  // (entities that need those IDs). For hierarchical APIs like Zoho Projects:
+  //   Portal (list-only) → Project (CRUD, needs portal_id) → Task (CRUD, needs project_id)
+  //
+  // Uses schema-driven profiles when available for precise dependency detection,
+  // otherwise falls back to heuristic-based analysis.
+  const graphResult = buildEntityDependencyGraph(
+    entities,
+    dependencyProfiles,
+    graph.tools,
+  );
+  entities = graphResult.sortedEntities;
+
   for (const entityGroup of entities) {
     const workflow = buildWorkflowForEntity(entityGroup, toolMap, classificationMap, config);
     if (workflow) {
@@ -132,8 +153,8 @@ export function generateWorkflows(
  * Build a workflow that tests ALL available tools for a single entity group.
  *
  * Supports three modes based on available tools:
- *   Full:      Create → Read[ALL] → Update[ALL] → Other[ALL] → Search[ALL] → Delete
- *   No-delete: Create → Read[ALL] → Update[ALL] → Other[ALL] → Search[ALL] (no cleanup)
+ *   Full:      PreCreateReads → Create → Read[ALL] → Update[ALL] → Other[ALL] → Search[ALL] → Delete
+ *   No-delete: PreCreateReads → Create → Read[ALL] → Update[ALL] → Other[ALL] → Search[ALL] (no cleanup)
  *   Read-only: Read[ALL] → Search[ALL] → Other[ALL] (no record creation)
  *
  * Returns null only if the entity has zero tools.
@@ -189,12 +210,6 @@ function buildWorkflowForEntity(
     }
   }
 
-  // Step: Create (if available — need exactly one record for subsequent tests)
-  if (hasCreate) {
-    const createTool = entity.create[0];
-    steps.push(buildCreateStep(stepIndex++, createTool, entity.entityName, toolMap.get(createTool), config));
-  }
-
   // Split update tools into secondary creators and remaining updates.
   // Secondary creators (tag/assign operations) create/associate secondary entities
   // with the primary record. They must run BETWEEN read producers and read consumers
@@ -211,34 +226,69 @@ function buildWorkflowForEntity(
     }
   }
 
-  // Steps: ALL Read tools + Secondary Creators interleaved
-  // Ordering: Read[0] → Read-Producers → Secondary-Creators → Read-Consumers
-  //
-  // First read tool uses buildReadStep (hardcoded to fetch by createdRecordId).
-  // Remaining reads are split: producers (non-consuming) run first to capture IDs,
-  // then secondary creators associate entities, then consumers use those IDs.
-  if (hasCreate && entity.read.length > 0) {
-    steps.push(buildReadStep(stepIndex++, entity.read[0], entity.entityName, toolMap.get(entity.read[0])));
-  }
-  const readStart = hasCreate ? 1 : 0;
-  const remainingReads = entity.read.slice(readStart);
-
-  // Split remaining reads into producers and consumers
-  const readProducers: string[] = [];
+  // Split ALL read tools into three groups:
+  //   1. preCreateReads: non-consuming reads that need NO IDs at all (e.g., getAllPortals)
+  //      → run BEFORE create to gather real data that informs create args
+  //   2. postCreateReads: non-consuming reads that still need IDs (secondary producers)
+  //   3. readConsumers: reads that consume IDs from producers
+  const preCreateReads: string[] = [];
+  const postCreateReads: string[] = [];
   const readConsumers: string[] = [];
-  for (const tn of remainingReads) {
-    const consumes = classificationMap.get(tn)?.consumesId ?? false;
+  for (const tn of entity.read) {
+    const cls = classificationMap.get(tn);
+    const consumes = cls?.consumesId ?? false;
     if (consumes) {
       readConsumers.push(tn);
     } else {
-      readProducers.push(tn);
+      // Non-consuming read: check if it has ANY required ID paths.
+      // If none, it's truly independent and can run before create.
+      const hasRequiredIds = (cls?.requiredIdParamPaths ?? []).length > 0;
+      if (!hasRequiredIds && hasCreate) {
+        preCreateReads.push(tn);
+      } else {
+        postCreateReads.push(tn);
+      }
     }
   }
 
-  // Add read producers first (they capture secondary entity IDs)
-  for (const toolName of readProducers) {
+  // Steps: Pre-create independent reads (e.g., getAllPortals)
+  // These run BEFORE create to capture real data from existing records.
+  // Their output (stored via outputMappings) can inform the create step.
+  for (const toolName of preCreateReads) {
     steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, 'read',
-      toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies));
+      toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies, hasCreate));
+  }
+
+  // Collect output keys from pre-create reads so create step can reference them
+  const preCreateOutputKeys = preCreateReads.flatMap((tn) => {
+    const cls = classificationMap.get(tn);
+    const hint = cls?.entityHint ?? '';
+    const family = extractResourceFamily(hint);
+    return family ? [`fetched_${family}_id`] : [];
+  });
+
+  // Step: Create (if available — need exactly one record for subsequent tests)
+  if (hasCreate) {
+    const createTool = entity.create[0];
+    const createCls = classificationMap.get(createTool);
+    steps.push(buildCreateStep(stepIndex++, createTool, entity.entityName, toolMap.get(createTool), config,
+      preCreateOutputKeys.length > 0 ? preCreateOutputKeys : undefined, createCls));
+  }
+
+  // Steps: Post-create read tools + Secondary Creators interleaved
+  // Ordering: Read[0] (by createdRecordId) → Read-Producers → Secondary-Creators → Read-Consumers
+  //
+  // First post-create read uses buildReadStep (hardcoded to fetch by createdRecordId).
+  // Remaining reads are producers that capture secondary entity IDs.
+  if (hasCreate && postCreateReads.length > 0) {
+    steps.push(buildReadStep(stepIndex++, postCreateReads[0], entity.entityName, toolMap.get(postCreateReads[0]), classificationMap.get(postCreateReads[0])));
+  }
+  const remainingPostCreateReads = hasCreate ? postCreateReads.slice(1) : postCreateReads;
+
+  // Add remaining post-create read producers (they capture secondary entity IDs)
+  for (const toolName of remainingPostCreateReads) {
+    steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, 'read',
+      toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies, hasCreate));
   }
 
   // Add secondary creators (e.g., Add_Tags) — they consume createdRecordId
@@ -253,7 +303,7 @@ function buildWorkflowForEntity(
       const cls = classificationMap.get(toolName);
       const op = cls?.operation ?? 'other';
       const step = buildGenericStep(stepIndex++, toolName, entity.entityName, op,
-        toolMap.get(toolName), cls, primaryEntityHint, availableSecondaryFamilies);
+        toolMap.get(toolName), cls, primaryEntityHint, availableSecondaryFamilies, hasCreate);
       steps.push(step);
     }
   }
@@ -261,7 +311,7 @@ function buildWorkflowForEntity(
   // Add read consumers — they can now access IDs from both producers AND secondary creators
   for (const toolName of readConsumers) {
     steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, 'read',
-      toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies));
+      toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies, hasCreate));
   }
 
   // Steps: ALL remaining Update tools (excludes secondary creators already added above)
@@ -270,7 +320,7 @@ function buildWorkflowForEntity(
     for (let i = 0; i < remainingUpdates.length; i++) {
       const toolName = remainingUpdates[i];
       if (i === 0) {
-        steps.push(buildUpdateStep(stepIndex++, toolName, entity.entityName, toolMap.get(toolName), config));
+        steps.push(buildUpdateStep(stepIndex++, toolName, entity.entityName, toolMap.get(toolName), config, classificationMap.get(toolName)));
       } else {
         // Upsert on primary entity needs create-compatible body data (upsert = create-or-update)
         const cls = classificationMap.get(toolName);
@@ -278,20 +328,18 @@ function buildWorkflowForEntity(
           const testData = getTestDataFromSchema(entity.entityName, toolMap.get(toolName)?.inputSchema, config.testDataOverrides);
           steps.push(buildUpsertStep(stepIndex++, toolName, entity.entityName, toolMap.get(toolName), testData, cls));
         } else {
-          steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, cls?.operation ?? 'other', toolMap.get(toolName), cls, primaryEntityHint, availableSecondaryFamilies));
+          steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, cls?.operation ?? 'other', toolMap.get(toolName), cls, primaryEntityHint, availableSecondaryFamilies, hasCreate));
         }
       }
     }
   }
 
   // Steps: ALL Other tools
+  // Include all tools regardless of create availability — cross-entity ID sharing
+  // may provide the needed IDs. Steps with unresolvable inputs are naturally skipped.
   for (const toolName of entity.other) {
     const classification = classificationMap.get(toolName);
-    // If no create step, only include "other" tools that don't need a record ID
-    if (!hasCreate && (classification?.idParamPaths ?? []).length > 0) {
-      continue;
-    }
-    steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, classification?.operation ?? 'other', toolMap.get(toolName), classification, primaryEntityHint, availableSecondaryFamilies));
+    steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, classification?.operation ?? 'other', toolMap.get(toolName), classification, primaryEntityHint, availableSecondaryFamilies, hasCreate));
   }
 
   // Steps: ALL Search tools
@@ -300,15 +348,16 @@ function buildWorkflowForEntity(
     if (i === 0) {
       steps.push(buildSearchStep(stepIndex++, toolName, entity.entityName, toolMap.get(toolName)));
     } else {
-      steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, 'search', toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies));
+      steps.push(buildGenericStep(stepIndex++, toolName, entity.entityName, 'search', toolMap.get(toolName), classificationMap.get(toolName), primaryEntityHint, availableSecondaryFamilies, hasCreate));
     }
   }
 
   // Step: Delete (if available — cleanup)
   if (hasDelete && hasCreate) {
     const deleteTool = entity.delete[0];
-    steps.push(buildDeleteStep(stepIndex, deleteTool, entity.entityName, toolMap.get(deleteTool)));
-    cleanupSteps.push(buildDeleteStep(0, deleteTool, entity.entityName, toolMap.get(deleteTool)));
+    const deleteClassification = classificationMap.get(deleteTool);
+    steps.push(buildDeleteStep(stepIndex, deleteTool, entity.entityName, toolMap.get(deleteTool), deleteClassification));
+    cleanupSteps.push(buildDeleteStep(0, deleteTool, entity.entityName, toolMap.get(deleteTool), deleteClassification));
   }
 
   // Skip if no steps were generated (all tools were filtered out)
@@ -329,18 +378,95 @@ function buildWorkflowForEntity(
 
 // === Step Builders ===
 
+/**
+ * Build schema-aware inputMappings from a tool's classification.
+ * For each required ID path_variable, creates a mapping with cross-entity fallbackKeys.
+ * Falls back to the provided defaultMappings when the tool has no classified ID paths.
+ */
+function buildSchemaAwareInputMappings(
+  classification: ToolClassification | undefined,
+  defaultMappings: import('./types.js').InputMapping[],
+): import('./types.js').InputMapping[] {
+  if (!classification) return defaultMappings;
+
+  const idPaths = classification.requiredIdParamPaths.length > 0
+    ? classification.requiredIdParamPaths
+    : classification.idParamPaths;
+
+  // Filter to path_variables only — these are URL route segments that need real IDs
+  const pathVarPaths = idPaths
+    .map((p) => p.replace(/\[\]/g, '[0]'))
+    .filter((p) => p.startsWith('path_variables.'));
+
+  if (pathVarPaths.length === 0) return defaultMappings;
+
+  // Build mappings for each path_variable with cross-entity fallbacks
+  const mappings: import('./types.js').InputMapping[] = pathVarPaths.map((path) => {
+    const paramName = path.split('.').pop()!.toLowerCase();
+    const familyFromParam = paramName.replace(/_id$/, '');
+    const fallbackKeys: string[] = [];
+    if (familyFromParam !== paramName && familyFromParam !== 'id') {
+      fallbackKeys.push(`fetched_${familyFromParam}_id`);
+      const singular = singularize(familyFromParam);
+      if (singular !== familyFromParam) {
+        fallbackKeys.push(`fetched_${singular}_id`);
+      }
+    }
+    return {
+      paramPath: path,
+      fromOutput: 'createdRecordId',
+      fallbackKeys: fallbackKeys.length > 0 ? fallbackKeys : undefined,
+    };
+  });
+
+  // Also include the default mappings (e.g., body.data[0].id for update)
+  // but only if they don't overlap with already-mapped paths
+  for (const dm of defaultMappings) {
+    if (!mappings.some((m) => m.paramPath === dm.paramPath)) {
+      mappings.push(dm);
+    }
+  }
+
+  return mappings;
+}
+
 function buildCreateStep(
   stepIndex: number,
   toolName: string,
   entity: string,
   tool: DiscoveredTool | undefined,
   config: WorkflowConfig,
+  preCreateOutputKeys?: string[],
+  classification?: ToolClassification,
 ): WorkflowStepDef {
   const testData = getTestDataFromSchema(entity, tool?.inputSchema, config.testDataOverrides);
   const argsTemplate = buildArgsFromSchema(tool, {
     moduleValue: entity,
     bodyData: [testData],
   });
+
+  // Link pre-create read outputs to the create step's path_variables.
+  // E.g., if getAllPortals captured fetched_portal_id, and createTask needs portal_id,
+  // map path_variables.portal_id ← fetched_portal_id.
+  const inputMappings: import('./types.js').InputMapping[] = [];
+  if (preCreateOutputKeys && preCreateOutputKeys.length > 0 && classification) {
+    const idPaths = classification.requiredIdParamPaths.length > 0
+      ? classification.requiredIdParamPaths
+      : classification.idParamPaths;
+    for (const path of idPaths) {
+      if (!path.startsWith('path_variables.')) continue;
+      const paramName = path.split('.').pop()!.toLowerCase();
+      const familyFromParam = paramName.replace(/_id$/, '');
+      if (familyFromParam === paramName || familyFromParam === 'id') continue;
+      // Find a matching pre-create output key
+      const matchKey = preCreateOutputKeys.find(
+        (k) => k === `fetched_${familyFromParam}_id` || k === `fetched_${singularize(familyFromParam)}_id`,
+      );
+      if (matchKey) {
+        inputMappings.push({ paramPath: path.replace(/\[\]/g, '[0]'), fromOutput: matchKey });
+      }
+    }
+  }
 
   return {
     stepIndex,
@@ -352,7 +478,7 @@ function buildCreateStep(
       name: 'createdRecordId',
       path,
     })),
-    inputMappings: [],
+    inputMappings,
   };
 }
 
@@ -361,10 +487,15 @@ function buildReadStep(
   toolName: string,
   entity: string,
   tool: DiscoveredTool | undefined,
+  classification?: ToolClassification,
 ): WorkflowStepDef {
   const argsTemplate = buildArgsFromSchema(tool, {
     moduleValue: entity,
   });
+
+  const defaultMappings: import('./types.js').InputMapping[] = [
+    { paramPath: 'query_params.ids', fromOutput: 'createdRecordId' },
+  ];
 
   return {
     stepIndex,
@@ -375,9 +506,7 @@ function buildReadStep(
     outputMappings: [
       { name: 'readData', path: 'data[0]' },
     ],
-    inputMappings: [
-      { paramPath: 'query_params.ids', fromOutput: 'createdRecordId' },
-    ],
+    inputMappings: buildSchemaAwareInputMappings(classification, defaultMappings),
   };
 }
 
@@ -387,12 +516,17 @@ function buildUpdateStep(
   entity: string,
   tool: DiscoveredTool | undefined,
   config: WorkflowConfig,
+  classification?: ToolClassification,
 ): WorkflowStepDef {
   const updateData = getUpdateTestData(entity, config.testDataOverrides);
   const argsTemplate = buildArgsFromSchema(tool, {
     moduleValue: entity,
     bodyData: [updateData],
   });
+
+  const defaultMappings: import('./types.js').InputMapping[] = [
+    { paramPath: 'body.data[0].id', fromOutput: 'createdRecordId' },
+  ];
 
   return {
     stepIndex,
@@ -401,9 +535,7 @@ function buildUpdateStep(
     description: `Update the created ${entity} record`,
     argsTemplate,
     outputMappings: [],
-    inputMappings: [
-      { paramPath: 'body.data[0].id', fromOutput: 'createdRecordId' },
-    ],
+    inputMappings: buildSchemaAwareInputMappings(classification, defaultMappings),
   };
 }
 
@@ -436,10 +568,15 @@ function buildDeleteStep(
   toolName: string,
   entity: string,
   tool: DiscoveredTool | undefined,
+  classification?: ToolClassification,
 ): WorkflowStepDef {
   const argsTemplate = buildArgsFromSchema(tool, {
     moduleValue: entity,
   });
+
+  const defaultMappings: import('./types.js').InputMapping[] = [
+    { paramPath: 'query_params.ids', fromOutput: 'createdRecordId' },
+  ];
 
   return {
     stepIndex,
@@ -448,9 +585,7 @@ function buildDeleteStep(
     description: `Delete the created ${entity} record (cleanup)`,
     argsTemplate,
     outputMappings: [],
-    inputMappings: [
-      { paramPath: 'query_params.ids', fromOutput: 'createdRecordId' },
-    ],
+    inputMappings: buildSchemaAwareInputMappings(classification, defaultMappings),
   };
 }
 
@@ -586,6 +721,7 @@ function buildGenericStep(
   classification: ToolClassification | undefined,
   primaryEntityHint?: string | null,
   availableSecondaryFamilies?: Set<string>,
+  hasCreate?: boolean,
 ): WorkflowStepDef {
   const argsTemplate = buildArgsFromSchema(tool, { moduleValue: entity });
 
@@ -602,9 +738,13 @@ function buildGenericStep(
     (p) => p.replace(/\[\]/g, '[0]'),
   );
 
-  // Primary-level paths: path_variables, query_params, body.data[N].id, body.ids, body.id.
+  // Primary-level paths: path_variables, body.data[N].id, body.ids, body.id.
   // These are safe for ANY ID source (createdRecordId or fetched_*_id).
-  const primaryPaths = normalizedIdPaths.filter(isPrimaryLevelPath);
+  // EXCLUDE query_params ID paths (e.g., query_params.ids) — these are optional filters,
+  // not required dependencies. Tools like getAllProjects work fine without them.
+  const primaryPaths = normalizedIdPaths.filter(
+    (p) => isPrimaryLevelPath(p) && !p.startsWith('query_params.'),
+  );
 
   if (primary) {
     // Primary entity tool — route createdRecordId ONLY to primary-level paths.
@@ -615,16 +755,31 @@ function buildGenericStep(
     // (e.g., path_variables.tag_id → "tag" family), route the fetched secondary ID
     // instead of createdRecordId. This handles mixed-entity tools like
     // Get_Record_Count_For_Tag which has both record_id AND tag_id in path_variables.
-    inputMappings = primaryPaths.map((path) => {
+    inputMappings = primaryPaths.flatMap((path) => {
       if (path.startsWith('path_variables.') && availableSecondaryFamilies) {
         const paramName = path.split('.').pop()!.toLowerCase();
         for (const family of availableSecondaryFamilies) {
           if (paramName.includes(family)) {
-            return { paramPath: path, fromOutput: `fetched_${family}_id` };
+            return [{ paramPath: path, fromOutput: `fetched_${family}_id` }];
           }
         }
       }
-      return { paramPath: path, fromOutput: 'createdRecordId' };
+      // Skip createdRecordId mapping when no create tool exists — it would be unresolvable
+      if (hasCreate === false) return [];
+
+      // Cross-entity fallbacks: for path_variables like portal_id, project_id, add
+      // fallbackKeys so the resolver tries fetched_{name}_id from sharedIdRegistry
+      const fallbackKeys: string[] = [];
+      if (path.startsWith('path_variables.')) {
+        const paramName = path.split('.').pop()!.toLowerCase();
+        const familyFromParam = paramName.replace(/_id$/, '');
+        if (familyFromParam !== paramName && familyFromParam !== 'id') {
+          fallbackKeys.push(`fetched_${familyFromParam}_id`);
+          fallbackKeys.push(`fetched_${singularize(familyFromParam)}_id`);
+        }
+      }
+
+      return [{ paramPath: path, fromOutput: 'createdRecordId', fallbackKeys: fallbackKeys.length > 0 ? fallbackKeys : undefined }];
     });
     outputMappings = [];
   } else {
@@ -674,14 +829,36 @@ function buildGenericStep(
         // - Generic "id" or param containing the family name → fetched_{family}_id (tool's own entity)
         // - Other params (e.g., record_id, module_api_name) → createdRecordId
         // Non-path_variables primary paths (body.ids, body.data[0].id) → createdRecordId
-        ...primaryPaths.map((path) => {
+        // Skip createdRecordId mappings when no create tool exists (hasCreate === false)
+        ...primaryPaths.flatMap((path) => {
           if (path.startsWith('path_variables.')) {
             const paramName = path.split('.').pop()!.toLowerCase();
             if (paramName === 'id' || paramName.includes(matchedFamily)) {
-              return { paramPath: path, fromOutput: outputKey };
+              return [{ paramPath: path, fromOutput: outputKey }];
+            }
+            // For hierarchical path_variables, try matching other known families
+            if (availableSecondaryFamilies) {
+              for (const sf of availableSecondaryFamilies) {
+                if (paramName.includes(sf)) {
+                  return [{ paramPath: path, fromOutput: `fetched_${sf}_id` }];
+                }
+              }
             }
           }
-          return { paramPath: path, fromOutput: 'createdRecordId' };
+          if (hasCreate === false) return [];  // skip unresolvable createdRecordId
+
+          // Cross-entity fallbacks for path_variables (e.g., portal_id → fetched_portal_id)
+          const fallbackKeys: string[] = [];
+          if (path.startsWith('path_variables.')) {
+            const paramName = path.split('.').pop()!.toLowerCase();
+            const familyFromParam = paramName.replace(/_id$/, '');
+            if (familyFromParam !== paramName && familyFromParam !== 'id') {
+              fallbackKeys.push(`fetched_${familyFromParam}_id`);
+              fallbackKeys.push(`fetched_${singularize(familyFromParam)}_id`);
+            }
+          }
+
+          return [{ paramPath: path, fromOutput: 'createdRecordId', fallbackKeys: fallbackKeys.length > 0 ? fallbackKeys : undefined }];
         }),
       ];
       outputMappings = [];
@@ -695,16 +872,37 @@ function buildGenericStep(
       // for secondary family names. Tools like Get_Record_Count_For_Tag have
       // entityHint "Count" (no producer), but their path_variables.tag_id should
       // still route to fetched_tag_id if a tag producer exists.
-      inputMappings = primaryPaths.map((path) => {
+      //
+      // CROSS-ENTITY FALLBACKS: For path_variables that look like cross-entity IDs
+      // (e.g., portal_id, project_id), add fallbackKeys so the resolver can find them
+      // in the sharedIdRegistry even if no local producer exists.
+      inputMappings = primaryPaths.flatMap((path) => {
         if (path.startsWith('path_variables.') && availableSecondaryFamilies) {
           const paramName = path.split('.').pop()!.toLowerCase();
           for (const family of availableSecondaryFamilies) {
             if (paramName.includes(family)) {
-              return { paramPath: path, fromOutput: `fetched_${family}_id` };
+              return [{ paramPath: path, fromOutput: `fetched_${family}_id` }];
             }
           }
         }
-        return { paramPath: path, fromOutput: 'createdRecordId' };
+        // Skip createdRecordId mapping when no create tool exists
+        if (hasCreate === false) return [];
+
+        // For path_variables that look like cross-entity references (e.g., portal_id, project_id),
+        // add fallbackKeys so the resolver tries fetched_{name}_id from the sharedIdRegistry
+        // when createdRecordId doesn't match.
+        const fallbackKeys: string[] = [];
+        if (path.startsWith('path_variables.')) {
+          const paramName = path.split('.').pop()!.toLowerCase();
+          // Strip _id suffix to get the family name (portal_id → portal, project_id → project)
+          const familyFromParam = paramName.replace(/_id$/, '');
+          if (familyFromParam !== paramName && familyFromParam !== 'id') {
+            fallbackKeys.push(`fetched_${familyFromParam}_id`);
+            fallbackKeys.push(`fetched_${singularize(familyFromParam)}_id`);
+          }
+        }
+
+        return [{ paramPath: path, fromOutput: 'createdRecordId', fallbackKeys: fallbackKeys.length > 0 ? fallbackKeys : undefined }];
       });
       outputMappings = [];
     }
@@ -718,6 +916,7 @@ function buildGenericStep(
     argsTemplate,
     outputMappings,
     inputMappings,
+    entityHint: classification?.entityHint ?? null,
   };
 }
 
@@ -743,7 +942,7 @@ function buildArgsFromSchema(
   hints: ArgBuildHints,
 ): Record<string, unknown> {
   if (!tool?.inputSchema) {
-    // Fallback: build minimal args from hints
+    // Fallback: build minimal args from hints (no schema to detect wrapper key)
     const args: Record<string, unknown> = {};
     if (hints.moduleValue) {
       args.path_variables = { module: hints.moduleValue };
@@ -808,21 +1007,22 @@ function buildBody(
   const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
   const required = (schema.required ?? []) as string[];
 
+  // Find the primary data array key — may be 'data', 'users', 'territories', 'modules', etc.
+  // Use bodyData hints for the first required array in the body schema.
+  let bodyDataUsed = false;
+
   for (const key of Object.keys(properties)) {
     const propSchema = properties[key];
 
-    if (key === 'data' && hints.bodyData) {
-      result.data = hints.bodyData;
+    if (!bodyDataUsed && hints.bodyData && propSchema.type === 'array' && required.includes(key)) {
+      // Inject bodyData into the primary required array (data, users, territories, etc.)
+      result[key] = hints.bodyData;
+      bodyDataUsed = true;
     } else if (required.includes(key)) {
-      // Use fillRequiredFields for arrays so items get proper sub-fields
-      // (generateValidValue returns [] for arrays, causing INVALID_DATA)
-      // Pass skipIdFields: true so synthetic "MCPProbeTest" IDs aren't injected
-      // into array items — real IDs come from producers/inputMappings at runtime.
-      if (propSchema.type === 'array') {
-        result[key] = fillRequiredFields(propSchema, { skipIdFields: true }, `body.${key}`);
-      } else {
-        result[key] = generateValidValue(propSchema);
-      }
+      // Use fillRequiredFields for all body fields — it has smart heuristics
+      // for field names (query, email, etc.) and recursively fills nested objects.
+      // Pass skipIdFields: true so synthetic IDs aren't injected into body items.
+      result[key] = fillRequiredFields(propSchema, { skipIdFields: true }, `body.${key}`);
     }
   }
 

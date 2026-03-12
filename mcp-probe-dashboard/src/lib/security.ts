@@ -67,7 +67,11 @@ const BLOCKED_HOSTNAMES = new Set([
   '169.254.169.254',
 ]);
 
-export function validateUrl(urlStr: unknown, fieldName = 'url'): string {
+export function validateUrl(
+  urlStr: unknown,
+  fieldName = 'url',
+  options?: { allowLocalhost?: boolean },
+): string {
   if (typeof urlStr !== 'string' || urlStr.length === 0) {
     throw new ValidationError(`${fieldName} must be a non-empty string`);
   }
@@ -82,13 +86,16 @@ export function validateUrl(urlStr: unknown, fieldName = 'url'): string {
     throw new ValidationError(`${fieldName} must use http or https scheme`);
   }
 
-  const host = parsed.hostname.toLowerCase();
-  if (BLOCKED_HOSTNAMES.has(host)) {
-    throw new ValidationError(`${fieldName} points to a blocked host`);
-  }
-  for (const pattern of PRIVATE_HOST_PATTERNS) {
-    if (pattern.test(host)) {
-      throw new ValidationError(`${fieldName} must not point to a private/internal IP`);
+  // Skip SSRF checks when localhost is explicitly allowed (e.g., Ollama local LLM)
+  if (!options?.allowLocalhost) {
+    const host = parsed.hostname.toLowerCase();
+    if (BLOCKED_HOSTNAMES.has(host)) {
+      throw new ValidationError(`${fieldName} points to a blocked host`);
+    }
+    for (const pattern of PRIVATE_HOST_PATTERNS) {
+      if (pattern.test(host)) {
+        throw new ValidationError(`${fieldName} must not point to a private/internal IP`);
+      }
     }
   }
 

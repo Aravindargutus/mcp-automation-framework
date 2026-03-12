@@ -211,7 +211,7 @@ async function runServer(
 
   // --- Build test context ---
   const rawClient = client.getRawClient();
-  const requestTimeoutMs = serverConfig.timeout?.request ?? config.defaults?.timeout?.request ?? 30_000;
+  const requestTimeoutMs = serverConfig.timeout?.request ?? config.defaults?.timeout?.request ?? 120_000;
   const testTimeoutMs = serverConfig.timeout?.test ?? config.defaults?.timeout?.test ?? 300_000;
 
   const baseContext: TestRunContext = {
