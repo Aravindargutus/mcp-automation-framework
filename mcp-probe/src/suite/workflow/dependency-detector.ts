@@ -22,6 +22,7 @@ import {
   MODULE_FIELD_PATTERNS,
   RESPONSE_ID_PATHS,
 } from './crud-patterns.js';
+import { classifyFromDescription } from './description-classifier.js';
 
 // === Phase 1: Classify Tools ===
 
@@ -32,11 +33,29 @@ export function classifyTools(tools: DiscoveredTool[]): ToolClassification[] {
   const globalPrefix = detectCommonPrefix(tools.map((t) => t.name));
 
   return tools.map((tool) => {
-    const { operation, producesId } = matchOperation(tool.name);
-    const entityHint = extractEntityHint(tool.name, globalPrefix);
+    const { operation: nameOperation, producesId } = matchOperation(tool.name);
+    const nameEntityHint = extractEntityHint(tool.name, globalPrefix);
     const { idPaths, requiredIdPaths, optionalIdPaths, moduleParam, moduleValues, consumesId } = analyzeSchema(tool.inputSchema);
     // Store the tool's own prefix (may differ from globalPrefix in multi-product servers)
     const toolPrefix = extractToolPrefix(tool.name) ?? globalPrefix;
+
+    // Supplement name-based hints with description-based classification.
+    // Description text often contains clearer entity/operation context than tool names,
+    // especially for tools with ambiguous or compound names.
+    // Only use description hints when the name-based classification is weak (null entity hint).
+    let operation = nameOperation;
+    let entityHint = nameEntityHint;
+    if (tool.description && entityHint === null) {
+      const descClass = classifyFromDescription(tool.name, tool.description);
+      if (descClass.confidence >= 0.6) {
+        // Use description entity hint when name gave nothing
+        if (descClass.entityHint) entityHint = descClass.entityHint;
+        // Use description operation only when name classification was ambiguous ('other')
+        if (nameOperation === 'other' && descClass.operationHint) {
+          operation = descClass.operationHint;
+        }
+      }
+    }
 
     return {
       toolName: tool.name,

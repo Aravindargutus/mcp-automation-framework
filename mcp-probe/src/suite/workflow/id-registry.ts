@@ -119,6 +119,24 @@ export class IdRegistry {
   }
 
   /**
+   * Clear all entries.
+   */
+  clear(): void {
+    this.store.clear();
+    this.familyIndex.clear();
+  }
+
+  /** Symbol.iterator for for...of compatibility. */
+  [Symbol.iterator](): IterableIterator<[string, unknown]> {
+    return this.store[Symbol.iterator]();
+  }
+
+  /** Required by the Map interface for type compatibility. */
+  get [Symbol.toStringTag](): string {
+    return 'IdRegistry';
+  }
+
+  /**
    * Get the number of entries.
    */
   get size(): number {
@@ -147,10 +165,10 @@ export class IdRegistry {
   }
 
   /**
-   * ForEach iteration.
+   * ForEach iteration — matches Map.forEach signature including the map parameter.
    */
-  forEach(callback: (value: unknown, key: string) => void): void {
-    this.store.forEach(callback);
+  forEach(callback: (value: unknown, key: string, map: Map<string, unknown>) => void, thisArg?: unknown): void {
+    this.store.forEach(callback, thisArg);
   }
 
   // === Family-Aware Lookup ===
