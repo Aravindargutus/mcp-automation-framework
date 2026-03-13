@@ -487,7 +487,7 @@ async function probeSampleData(
 /**
  * Safely unwrap an MCP response to get the parsed JSON content.
  */
-function safeUnwrapMCPResponse(response: unknown): unknown {
+export function safeUnwrapMCPResponse(response: unknown): unknown {
   try {
     return unwrapMCPResponse(response);
   } catch {
@@ -502,7 +502,7 @@ function safeUnwrapMCPResponse(response: unknown): unknown {
  * Strips internal/system fields (IDs, timestamps, URLs) to keep only
  * the user-facing field formats that are useful as templates.
  */
-function extractFirstRecord(response: unknown): Record<string, unknown> | null {
+export function extractFirstRecord(response: unknown): Record<string, unknown> | null {
   if (!response || typeof response !== 'object') return null;
 
   // Direct array
@@ -550,7 +550,7 @@ function extractFirstRecord(response: unknown): Record<string, unknown> | null {
  * Remove internal/system fields from a sample record to keep it focused
  * on user-facing field formats. Keeps the record compact for LLM context.
  */
-function sanitizeSampleRecord(record: Record<string, unknown>): Record<string, unknown> {
+export function sanitizeSampleRecord(record: Record<string, unknown>): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
 
   // Fields to exclude: internal IDs, system timestamps, URLs, large nested objects
@@ -575,7 +575,7 @@ function sanitizeSampleRecord(record: Record<string, unknown>): Record<string, u
  * Only fills required path_variables from the output store.
  * Returns null if required args can't be satisfied.
  */
-function buildMinimalProbeArgs(
+export function buildMinimalProbeArgs(
   tool: DiscoveredTool,
   outputStore: Map<string, unknown>,
 ): Record<string, unknown> | null {
