@@ -165,7 +165,10 @@ async function executeEntityWorkflow(
 ): Promise<EntityResult> {
   const entityName = workflow.entity;
   const startTime = Date.now();
-  const outputStore = new Map<string, unknown>();
+  // Use IdRegistry instead of plain Map so singular/plural key variants
+  // (e.g., fetched_portal_id vs fetched_portals_id) resolve correctly
+  // within a single entity workflow, not just cross-entity.
+  const outputStore = new IdRegistry();
   const stepSummaries: StepSummary[] = [];
 
   // Seed per-entity outputStore with cross-entity IDs from the shared registry.

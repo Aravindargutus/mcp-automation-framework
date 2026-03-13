@@ -21,13 +21,26 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const baseUrlParam = searchParams.get('baseUrl');
 
+  // Allowlist: only localhost/127.0.0.1 Ollama hosts are permitted.
+  // This prevents SSRF attacks where a malicious baseUrl probes internal network services.
+  const ALLOWED_OLLAMA_HOSTS = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i;
+
+  const sanitizeOllamaHost = (url: string): string | null => {
+    const stripped = url.replace(/\/v1\/?$/, '').trim();
+    return ALLOWED_OLLAMA_HOSTS.test(stripped) ? stripped : null;
+  };
+
   let ollamaHost = 'http://localhost:11434';
   if (baseUrlParam) {
-    ollamaHost = baseUrlParam.replace(/\/v1\/?$/, '');
+    const safe = sanitizeOllamaHost(baseUrlParam);
+    if (!safe) {
+      return NextResponse.json({ models: [], error: 'Invalid Ollama host. Only localhost URLs are allowed.' }, { status: 400 });
+    }
+    ollamaHost = safe;
   } else {
     const config = getLLMConfig();
     if (config?.baseUrl) {
-      ollamaHost = config.baseUrl.replace(/\/v1\/?$/, '');
+      ollamaHost = sanitizeOllamaHost(config.baseUrl) ?? 'http://localhost:11434';
     }
   }
 
